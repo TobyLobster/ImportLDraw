@@ -24,13 +24,13 @@ from . import importldraw
 bl_info = {
     "name": "Import LDraw",
     "description": "Import LDraw models in .mpd .ldr .l3b and .dat formats",
-    "author": "Toby Nelson",
-    "version": (1, 0, 0),
+    "author": "Toby Nelson <toby@tnelson.demon.co.uk>",
+    "version": (1, 0, 1),
     "blender": (2, 76, 0),
     "location": "File > Import",
     "warning": "",
-    "wiki_url": "",
-    "tracker_url": "",
+    "wiki_url": "https://github.com/TobyLobster/ImportLDraw",
+    "tracker_url": "https://github.com/TobyLobster/ImportLDraw/issues",
     "category": "Import-Export"
     }
 

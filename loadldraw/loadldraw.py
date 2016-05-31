@@ -123,25 +123,25 @@ def printError(message):
 # **************************************************************************************
 # **************************************************************************************
 class Math:
-    # Rotation and scale matrices that convert LDraw coordinate space to Blender coordinate space
-    scaleMatrix = mathutils.Matrix((
+    identityMatrix = mathutils.Matrix((
+            (1.0, 0.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0, 0.0),
+            (0.0, 0.0, 0.0, 1.0)
+        ))
+    rotationMatrix = mathutils.Matrix.Rotation(math.radians(-90), 4, 'X')
+
+    def clamp01(value):
+        return max(min(value, 1.0), 0.0)
+
+    def __init__(self):
+        # Rotation and scale matrices that convert LDraw coordinate space to Blender coordinate space
+        Math.scaleMatrix = mathutils.Matrix((
                 (Options.scale, 0.0,            0.0,            0.0),
                 (0.0,           Options.scale,  0.0,            0.0),
                 (0.0,           0.0,            Options.scale,  0.0),
                 (0.0,           0.0,            0.0,            1.0)
             ))
-
-    rotationMatrix = mathutils.Matrix.Rotation(math.radians(-90), 4, 'X')
-
-    identityMatrix = mathutils.Matrix((
-                (1.0, 0.0, 0.0, 0.0),
-                (0.0, 1.0, 0.0, 0.0),
-                (0.0, 0.0, 1.0, 0.0),
-                (0.0, 0.0, 0.0, 1.0)
-            ))
-
-    def clamp01(value):
-        return max(min(value, 1.0), 0.0)
 
 
 # **************************************************************************************
@@ -1241,6 +1241,8 @@ class BlenderMaterials:
         out = BlenderMaterials.__nodeOutput(nodes, 290, 100)
         if alpha == 1.0:
             node = BlenderMaterials.__nodeDiffuse(nodes, diffColour, 0.0, -242, 154)
+            fresnel = BlenderMaterials.__nodeFresnel(nodes, 1.46, -234, 260)
+            links.new(fresnel.outputs[0], mix.inputs[0])
         else:
             node = BlenderMaterials.__nodeGlass(nodes, diffColour, 0.05, 1.46, 'BECKMANN', -242, 154)
             fresnel = BlenderMaterials.__nodeFresnel(nodes, 1.46, -234, 260)
@@ -1636,6 +1638,7 @@ def loadFromFile(context, filename, isFullFilepath=True):
     # and the colours derived from that.
     Configure()
     LegoColours()
+    Math()
 
     if Configure.ldrawInstallDirectory == "":
         printError("Could not find LDraw Part Library")
@@ -1714,9 +1717,5 @@ def loadFromFile(context, filename, isFullFilepath=True):
     return rootOb
 
 # **************************************************************************************
-Configure()
-LegoColours()
-
 if __name__ == "__main__":
     loadFromFile("3001.dat", False)
-    debugPrint("LDraw Import Done")

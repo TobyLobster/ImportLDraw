@@ -107,7 +107,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
     """Import LDraw - Import Operator."""
 
     bl_idname       = "import_scene.importldraw"
-    bl_description  = "Import LDraw models (.mpd/.ldr/.dat)"
+    bl_description  = "Import LDraw models (.mpd/.ldr/.l3b/.dat)"
     bl_label        = "Import LDraw Models"
     bl_space_type   = "PROPERTIES"
     bl_region_type  = "WINDOW"
