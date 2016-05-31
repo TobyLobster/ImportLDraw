@@ -1,0 +1,20 @@
+0 ~LSynth Technic Flex-System Hose - Cross Section
+0 Name: LS51.dat
+0 Author: Kevin Clague [kclague]
+0 !LDRAW_ORG Unofficial_Part
+0 !LICENSE Redistributable under CCAL version 2.0 : see CAreadme.txt
+
+0 BFC CERTIFY CCW
+
+0 !KEYWORDS LSynth
+
+0 !HISTORY 2006-11-25 [kclague] Place holder part, can be replaced as needed
+0 !HISTORY 2004-11-21 [GuyVivan] Made BFC Compliant
+0 !HISTORY 2007-04-03 [Holly-Wood] Fixed header, some minor fixes
+
+1 16 0 0 0 4 0 0 0 1 0 0 0 4 4-4cyli.dat
+0 BFC CERTIFY INVERTNEXT
+1 16 0 0 0 2 0 0 0 1 0 0 0 2 4-4cyli.dat
+1 16 0 0 0 2 0 0 0 1 0 0 0 2 ring1.dat
+1 16 0 1 0 2 0 0 0 -1 0 0 0 2 ring1.dat
+0

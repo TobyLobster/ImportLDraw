@@ -1,0 +1,20 @@
+0 String End Stud
+0 Name: 572a.dat
+0 Author: Steve Bliss [sbliss]
+0 !LDRAW_ORG Part UPDATE 2005-01
+0 !LICENSE Redistributable under CCAL version 2.0 : see CAreadme.txt
+
+0 BFC CERTIFY CCW
+
+0 !HISTORY 2005-12-28 [PTadmin] Official Update 2005-01
+0 !HISTORY 2007-07-09 [PTadmin] Header formatted for Contributor Agreement
+0 !HISTORY 2008-07-01 [PTadmin] Official Update 2008-01
+
+1 16 0 0 0 8 0 0 0 1 0 0 0 8 4-4edge.dat
+1 16 0 4 0 6 0 0 0 1 0 0 0 6 4-4edge.dat
+1 16 0 4 0 -6 0 0 0 -4 0 0 0 6 4-4disc.dat
+1 16 0 0 0 8 0 0 0 4 0 0 0 8 4-4cyli.dat
+1 16 0 0 0 2 0 0 0 1 0 0 0 2 ring3.dat
+1 16 0 0 0 1 0 0 0 1 0 0 0 1 stud.dat
+1 16 0 4 0 -1 0 0 0 -1 0 0 0 1 stud4a.dat
+0

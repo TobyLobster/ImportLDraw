@@ -1,0 +1,14 @@
+0 Stud with LEGO Logo - Non-3D Thin Lines
+0 Name: stud-logo.dat
+0 Author: Paul Easter [pneaster]
+0 !LDRAW_ORG Unofficial_Primitive
+0 !LICENSE Redistributable under CCAL version 2.0 : see CAreadme.txt
+
+0 BFC CERTIFY CCW
+
+1 16 0 0 0 6 0 0 0 1 0 0 0 6 4-4edge.dat
+1 16 0 -4 0 6 0 0 0 1 0 0 0 6 4-4edge.dat
+1 16 0 0 0 6 0 0 0 -4 0 0 0 6 4-4cyli.dat
+1 16 0 -4 0 6 0 0 0 1 0 0 0 6 4-4disc.dat
+
+1 16 0 -4 0 1 0 0 0 1 0 0 0 1 logo.dat

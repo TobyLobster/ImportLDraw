@@ -1,0 +1,21 @@
+0 ~LSynth Technic Pneumatic Hose - Cross Section
+0 Name: LS21.dat
+0 Author: Kevin Clague [kclague]
+0 !LDRAW_ORG Unofficial_Part
+0 !LICENSE Redistributable under CCAL version 2.0 : see CAreadme.txt
+
+0 BFC CERTIFY CW
+
+0 !KEYWORD LSynth
+
+0 !HISTORY 2006-11-25 [kclague] Place holder part, can be replaced as needed 
+0 !HISTORY 2007-02-15 [Holly-Wood] BFCed, fixed header
+
+1 16 0 0 0 6 0 0 0 1 0 0 0 6 4-4cyli.dat
+0 BFC INVERTNEXT
+1 16 0 0 0 2 0 0 0 1 0 0 0 2 4-4cyli.dat
+1 16 0 0 0 2 0 0 0 1 0 0 0 2 ring1.dat
+1 16 0 0 0 2 0 0 0 1 0 0 0 2 ring2.dat
+1 16 0 1 0 2 0 0 0 -1 0 0 0 2 ring1.dat
+1 16 0 1 0 2 0 0 0 -1 0 0 0 2 ring2.dat
+0

@@ -1,0 +1,14 @@
+0 Stud with LEGO Logo - 3D Flattened
+0 Name: stud-logo5.dat
+0 Author: Steffen [Steffen]
+0 !LDRAW_ORG Unofficial_Primitive
+0 !LICENSE Redistributable under CCAL version 2.0 : see CAreadme.txt
+
+0 BFC CERTIFY CCW
+
+1 16 0 0 0 6 0 0 0 1 0 0 0 6 4-4edge.dat
+1 16 0 0 0 6 0 0 0 -3.4 0 0 0 6 4-4cyli.dat
+1 16 0 -3.4 0 5.6 0 0 0 -5.6 0 0 0 5.6 t01o0714.dat
+1 16 0 -3.8 0 5.6 0 0 0 1 0 0 0 5.6 4-4disc.dat
+
+1 16 0 -3.8 0 1 0 0 0 1 0 0 0 1 logo5.dat

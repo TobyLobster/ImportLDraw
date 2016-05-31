@@ -1,0 +1,36 @@
+0 ~LSynth Technic Pneumatic Hose - Beveled End Piece
+0 Name: LS22.dat
+0 Author: Fredrik Glöckner [fredrigl]
+0 !LDRAW_ORG Unofficial_Part
+0 !LICENSE Redistributable under CCAL version 2.0 : see CAreadme.txt
+
+0 BFC CERTIFY CW
+
+0 !KEYWORDS LSynth
+
+0 !HISTORY 2003-11-30 [Steffen] BFCed
+0 !HISTORY 2011-06-05 [Holly-Wood] Added edges, closed top, rearranged
+
+1 16 0 16 0 4 0 0 0 1 0 0 0 4 4-4edge.dat
+1 16 0 16 0 6 0 0 0 1 0 0 0 6 4-4edge.dat
+1 16 0 2 0 4 0 0 0 1 0 0 0 4 4-4edge.dat
+1 16 0 2 0 6 0 0 0 1 0 0 0 6 4-4edge.dat
+1 16 0 0 0 3 0 0 0 1 0 0 0 3 4-4edge.dat
+1 16 0 0 0 5 0 0 0 1 0 0 0 5 4-4edge.dat
+1 16 0 16 0 -2 0 0 0 -1 0 0 0 2 4-4ring2.dat
+0 BFC INVERTNEXT
+1 16 0 2 0 4 0 0 0 14 0 0 0 4 4-4cyli.dat
+1 16 0 2 0 6 0 0 0 14 0 0 0 6 4-4cyli.dat
+0 BFC INVERTNEXT
+1 16 0 2 0 1 0 0 0 -2 0 0 0 1 1-4CON3.DAT
+0 BFC INVERTNEXT
+1 16 0 2 0 0 0 1 0 -2 0 -1 0 0 1-4CON3.DAT
+0 BFC INVERTNEXT
+1 16 0 2 0 -1 0 0 0 -2 0 0 0 -1 1-4CON3.DAT
+0 BFC INVERTNEXT
+1 16 0 2 0 0 0 -1 0 -2 0 1 0 0 1-4CON3.DAT
+1 16 0 2 0 0.667 0 0 0 -1.25 0 0 0 0.667 4-4CON8.DAT
+1 16 0 1.25 0 0.625 0 0 0 -1.25 0 0 0 0.625 4-4CON8.DAT
+1 16 0 0 0 1 0 0 0 1 0 0 0 1 4-4ring3.dat
+1 16 0 0 0 1 0 0 0 1 0 0 0 1 4-4ring4.dat
+0

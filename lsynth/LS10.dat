@@ -1,0 +1,25 @@
+0 ~LSynth Electric Cable Segment
+0 Name: LS10.dat
+0 Author: William Howard, Kevin Clague [kclague]
+0 !LDRAW_ORG Unofficial_Part
+0 !LICENSE Redistributable under CCAL version 2.0 : see CAreadme.txt
+
+0 BFC CERTIFY CW
+
+0 !KEYWORDS LSynth
+
+0 !HISTORY 2006-10-14 [WilliamH] Place holder part, can be replaced as needed
+0 !HISTORY 2006-11-25 [kclague] Added endcaps to cover for cable twist
+0 !HISTORY 2007-04-03 [Holly-Wood] BFCed, fixed header, rounded
+
+1 16 -0.05 1 1.8 1.768 0 1.768 0 -1 0 -1.768 0 1.768 3-4cyli.dat
+1 16 -0.05 1 -1.75 -1.768 0 -1.768 0 -1 0 1.768 0 -1.768 3-4cyli.dat
+2 24 -1.818 0 0.032 -1.818 1 0.032
+2 24 1.718 0 0.032 1.718 1 0.032
+1 16 -0.05 1 1.8 1.768 0 1.768 0 -1 0 -1.768 0 1.768 3-4disc.dat
+1 16 -0.05 1 -1.75 -1.768 0 -1.768 0 -1 0 1.768 0 -1.768 3-4disc.dat
+4 16 -0.068 1 -1.818 1.718 1 0.032 -0.068 1 1.818 -1.818 1 0.032
+1 16 -0.05 0 1.8 1.768 0 1.768 0 1 0 -1.768 0 1.768 3-4disc.dat
+1 16 -0.05 0 -1.75 -1.768 0 -1.768 0 1 0 1.768 0 -1.768 3-4disc.dat
+4 16 -1.818 0 0.032 -0.068 0 1.818 1.718 0 0.032 -0.068 0 -1.818
+0

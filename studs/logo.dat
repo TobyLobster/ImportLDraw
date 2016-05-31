@@ -1,0 +1,41 @@
+0 LEGO Logo for Studs - Non-3D Thin Lines
+0 Name: logo.dat
+0 Author: Paul Easter [pneaster]
+0 !LDRAW_ORG Unofficial_Primitive
+0 !LICENSE Redistributable under CCAL version 2.0 : see CAreadme.txt
+
+0 BFC CERTIFY CCW
+
+0 !HISTORY 2000-11-05 [pneaster] corrected "E"
+0 !HISTORY 2012-02-04 [Steffen]  rotated 90 degrees to match stud logo orientation, uploaded to PT
+
+0 // L
+2 24 -2 0 -4 2 0 -5
+2 24 2 0 -5 2 0 -3.5
+
+0 // E
+2 24 -2 0 0 -2 0 -2
+2 24 -2 0 -2 2 0 -3
+2 24 2 0 -3 2 0 -1
+2 24 0 0 -1 0 0 -2.5
+
+0 // G
+2 24 -1.5 0 2.25 -2 0 2
+2 24 -2 0 2 -2 0 1
+2 24 -2 0 1 -1.5 0 0.5
+2 24 -1.5 0 0.5 1.5 0 -0.25
+2 24 1.5 0 -0.25 2 0 0
+2 24 2 0 0 2 0 1
+2 24 2 0 1 1.5 0 1.5
+2 24 1.5 0 1.5 0 0 2
+2 24 0 0 2 0 0 1
+
+0 // O
+2 24 -1.5 0 4.75 -2 0 4.5
+2 24 -2 0 4.5 -2 0 3.5
+2 24 -2 0 3.5 -1.5 0 3
+2 24 -1.5 0 3 1.5 0 2.25
+2 24 1.5 0 2.25 2 0 2.5
+2 24 2 0 2.5 2 0 3.5
+2 24 2 0 3.5 1.5 0 4
+2 24 1.5 0 4 -1.5 0 4.75

@@ -1,0 +1,27 @@
+0 ~LSynth Straight String Segment for STRING_WITH_GRIPS_21L
+0 Name: LS61.dat
+0 Author: Willy Tschager [Holly-Wood]
+0 !LDRAW_ORG Unofficial_Part
+0 !LICENSE Redistributable under CCAL version 2.0 : see CAreadme.txt
+
+0 BFC CERTIFY CW
+
+0 !KEYWORDS LSynth
+0 !HISTORY 2009-09-12 [Holly-Wood] Initial version
+
+1 16 0 0 -22.5 1 0 0 0 1 0 0 0 1 LS60.dat
+1 16 0 0 -21 1 0 0 0 1 0 0 0 1 LS60.dat
+1 16 0 0 -19.5 1 0 0 0 1 0 0 0 1 LS60.dat
+1 16 0 0 -18 1 0 0 0 1 0 0 0 1 LS60.dat
+1 16 0 0 -16.5 1 0 0 0 1 0 0 0 1 LS60.dat
+1 16 0 0 -15 1 0 0 0 1 0 0 0 1 LS60.dat
+1 16 0 0 -13.5 1 0 0 0 1 0 0 0 1 LS60.dat
+1 16 0 0 -12 1 0 0 0 1 0 0 0 1 LS60.dat
+1 16 0 0 -10.5 1 0 0 0 1 0 0 0 1 LS60.dat
+1 16 0 0 -9 1 0 0 0 1 0 0 0 1 LS60.dat
+1 16 0 0 -7.5 1 0 0 0 1 0 0 0 1 LS60.dat
+1 16 0 0 -6 1 0 0 0 1 0 0 0 1 LS60.dat
+1 16 0 0 -4.5 1 0 0 0 1 0 0 0 1 LS60.dat
+1 16 0 0 -3 1 0 0 0 1 0 0 0 1 LS60.dat
+1 16 0 0 -1.5 1 0 0 0 1 0 0 0 1 LS60.dat
+0

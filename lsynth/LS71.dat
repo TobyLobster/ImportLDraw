@@ -1,0 +1,15 @@
+0 ~LSynth Electric Power Functions 2-Wires Cable Segment
+0 Name: LS71.dat
+0 Author: Philippe Hurbain [Philo]
+0 !LDRAW_ORG Unofficial_Part
+0 !LICENSE Redistributable under CCAL version 2.0 : see CAreadme.txt
+
+0 BFC CERTIFY CW
+
+0 !HISTORY 2008-08-09 [Philo] Creation
+
+1 16 0 0 1.237 1.23744 0 1.23744 0 1 0 -1.23744 0 1.23744 3-4cyli.dat
+1 16 0 0 -1.237 -1.23744 0 -1.23744 0 1 0 1.23744 0 -1.23744 3-4cyli.dat
+2 24 -1.237 0 0 -1.237 1 0
+2 24 1.238 0 0 1.238 1 0
+0

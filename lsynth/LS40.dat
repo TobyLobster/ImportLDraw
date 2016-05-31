@@ -1,0 +1,24 @@
+0 ~LSynth Technic Flexible Axle - End Piece
+0 Name: LS40.dat
+0 Author: Willy Tschager [Holly-Wood]
+0 !LDRAW_ORG Unofficial_Part
+0 !LICENSE Redistributable under CCAL version 2.0 : see CAreadme.txt
+
+0 BFC CERTIFY CW
+
+0 !KEYWORDS LSynth
+
+0 !HISTORY 2007-04-29 [Holly-Wood] Initial version
+
+0 // Based on work of Steve Bliss and Chris Dee
+
+0 Skinny tip
+1 16 0 20 0 -1 0 0 0 -5 0 0 0 1 STUD3A.DAT
+
+0 Mixed Cylinder & Cross-axle end section
+1 16 0 16 0 0 1 0 1 0 0 0 0 -1 s\faxle1.dat
+1 16 0 12 0 0 1 0 1 0 0 0 0 -1 s\faxle2.dat
+1 16 0 8 0 0 1 0 1 0 0 0 0 -1 s\faxle3.dat
+1 16 0 4 0 0 1 0 1 0 0 0 0 -1 s\faxle4.dat
+1 16 0 0 0 0 1 0 1 0 0 0 0 -1 s\faxle5.dat
+0

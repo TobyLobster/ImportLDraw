@@ -1,0 +1,18 @@
+0 ~LSynth Hose Flexible 19M Segment
+0 Name: LS91.dat
+0 Author: J.C. Tchang [tchang]
+0 !LDRAW_ORG Unofficial_Part
+0 !LICENSE Redistributable under CCAL version 2.0 : see CAreadme.txt
+
+0 BFC CERTIFY CCW
+
+1 16 0 1.5 0 4 0 0 0 1 0 0 0 4 4-4edge.dat
+1 16 0 1.25 0 1 0 0 0 0.25 0 0 0 1 4-4con4.dat
+1 16 0 0 0 5 0 0 0 5 0 0 0 5 t01o2500.dat
+1 16 0 0 0 5 0 0 0 -5 0 0 0 5 t01o2500.dat
+1 16 0 -1.25 0 1 0 0 0 -0.25 0 0 0 1 4-4con4.dat
+1 16 0 -1.5 0 4 0 0 0 1 0 0 0 4 4-4edge.dat
+0 //
+1 16 0 -1.5 0 0.5 0 0 0 -2.8 0 0 0 0.5 4-4con7.dat
+1 16 0 1.5 0 0.5 0 0 0 2.8 0 0 0 0.5 4-4con7.dat
+0 //
