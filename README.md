@@ -47,7 +47,7 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 **Setting the LDraw Parts Library directory**
 
 + Download the latest complete [LDraw Parts Library](http://ldraw.org/parts/latest-parts.html) and unzip it to a directory e.g. called 'ldraw'.
-+ Download the unofficial parts and unzip it to sub-directory 'ldraw/unofficial/'
++ OPTIONAL: Download the unofficial parts and unzip it to sub-directory 'ldraw/unofficial/'
 + From the Blender menu click: File > Import > LDraw (.mpd/.ldr/.l3b/.dat).
 + In the bottom left of Blender's window, there's a panel of *Import Options*.
 + The first option is the LDraw Parts Library directory. Type the full filepath to the 'ldraw' directory you unzipped to.
