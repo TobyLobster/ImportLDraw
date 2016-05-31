@@ -5,7 +5,7 @@
 ![Tower Bridge](./images/tower_960.png)
 
 ## Purpose ##
-*Import LDraw* imports [LEGO](https://www.lego.com/)&trade; models into Blender.
+*Import LDraw* imports [LEGO](https://www.lego.com/)® models into Blender.
 
 It supports **.mpd**, **.ldr**, **.l3b**, and **.dat** file formats.
 
@@ -67,7 +67,7 @@ It was inspired by and initially based on code from [LDR-Importer](https://githu
 ## External References ##
 <a href="https://www.blender.org/"><img align="left" src="./images/logos/blender-plain.png" alt="Blender logo" style="margin: 0px 10px 0px 0px;"/></a>
 
-**Blender** is the free and open source 3D creation suite.<br clear=left>
+**Blender**&trade; is the free and open source 3D creation suite.<br clear=left>
 
 <a href="http://www.ldraw.org/"><img align="left" src="./images/logos/Official_LDraw_Logo.png" alt="LDraw logo" style="margin: 0px 10px 0px 0px;"/></a>
 
