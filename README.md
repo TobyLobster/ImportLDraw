@@ -65,25 +65,25 @@ It was inspired by and initially based on code from [LDR-Importer](https://githu
 *Import LDraw* is licensed under the [GPLv2](http://www.gnu.org/licenses/gpl-2.0.html) or any later version.
 
 ## External References ##
-<a href="https://www.blender.org/"><img align="left" src="./images/logos/blender-plain.png" alt="Blender logo" style="width: 160px; margin: 0px 10px 0px 0px;"/></a>
+<a href="https://www.blender.org/"><img align="left" src="./images/logos/blender-plain.png" alt="Blender logo" style="margin: 0px 10px 0px 0px;"/></a>
 
 Blender is the free and open source 3D creation suite.<br clear=left>
 
-<a href="http://www.ldraw.org/"><img align="left" src="./images/logos/Official_LDraw_Logo.png" alt="LDraw logo" style="width: 160px; margin: 0px 10px 0px 0px;"/></a>
+<a href="http://www.ldraw.org/"><img align="left" src="./images/logos/Official_LDraw_Logo.png" alt="LDraw logo" style="margin: 0px 10px 0px 0px;"/></a>
 
 **LDraw**&trade; is an open standard for LEGO CAD programs that allow the user to create virtual LEGO models and scenes. You can use it to document models you have physically built, create building instructions just like LEGO, render 3D photo realistic images of your virtual models and even make animations.
 The possibilities are endless. Unlike real LEGO bricks where you are limited by the number of parts and colors, in LDraw nothing is impossible.
 
 LDraw&trade; is a trademark owned and licensed by the Estate of James Jessiman. This plug-in is not developed or endorsed by the creators of The LDraw System of Tools.<br clear=left>
 
-<a href="http://bricksmith.sourceforge.net"><img align="left" src="./images/logos/BricksmithIcon.png" alt="Bricksmith logo" style="width: 160px; margin: 0px 10px 0px 0px;"/></a>
+<a href="http://bricksmith.sourceforge.net"><img align="left" src="./images/logos/BricksmithIcon.png" alt="Bricksmith logo" style="margin: 0px 10px 0px 0px;"/></a>
 
 **Bricksmith** allows you to create virtual instructions for your Lego creations on your Mac.<br clear=left>
 
-<a href="http://lsynth.sourceforge.net"><img align="left" src="./images/logos/LSynthExample.png" alt="LSynth example" style="width: 160px; margin: 0px 10px 0px 0px;"/></a>
+<a href="http://lsynth.sourceforge.net"><img align="left" src="./images/logos/LSynthExample.png" alt="LSynth example" style="margin: 0px 10px 0px 0px;"/></a>
 
 **LSynth** is a program that synthesizes bendable parts for LDraw files.<br clear=left>
 
-<a href="https://www.lego.com/"><img align="left" src="./images/logos/lego.jpg" alt="LEGO logo" style="width: 160px; margin: 0px 10px 0px 0px;"/></a>
+<a href="https://www.lego.com/"><img align="left" src="./images/logos/lego.jpg" alt="LEGO logo" style="margin: 0px 10px 0px 0px;"/></a>
 
 **LEGO**® is a registered trademark of the Lego Group<br clear=left>
