@@ -75,6 +75,10 @@ class Options:
     LSynthDirectory    = r""            # Full path to the lsynth parts (Defaults to <ldrawdir>/unofficial/lsynth if left blank)
     studLogoDirectory  = r""            # Optional full path to the stud logo parts (if not found in unofficial directory)
 
+    # Ambiguous Normals
+    # Older LDraw parts (parts not yet BFC certified) have ambiguous normals.
+    # We resolve this by creating double sided faces ("double") or by taking a best guess ("guess")
+    resolveAmbiguousNormals = "guess"   # How to resolve ambiguous normals
 
 # **************************************************************************************
 # Globals
@@ -717,6 +721,12 @@ class LDrawGeometry:
             
             faceCCW = geometry.windingCCW[index] != invert
             faceCull = geometry.culling[index] and cull
+            
+            # If we are going to resolve ambiguous normals by "best guess" we will let 
+            # Blender calculate that for us later. Just cull with arbitrary winding for now.
+            if not faceCull:
+                if Options.resolveAmbiguousNormals == "guess":
+                    faceCull = True
 
             if faceCCW or not faceCull:
                 self.points.extend(newPoints)
@@ -764,10 +774,8 @@ class LDrawNode:
     def isBlenderObjectNode(self):
         """
         Calculates if this node should become a Blender object.
-
         Some nodes will become objects in Blender, some will not.
-
-        Typically nodes that reference a part become Blender Objects, but not subparts.
+        Typically nodes that reference a model or a part become Blender Objects, but not nodes that reference subparts.
         """
 
         # The root node is always a Blender node
@@ -779,7 +787,7 @@ class LDrawNode:
 
         # Exception #1 - If flattening the hierarchy, we only want parts (not models)
         if Options.flattenHierarchy:
-            isBON = self.file.isPart
+            isBON = self.file.isPart and not self.isSubPart
 
         # Exception #2 - We are not a Blender Object if we are an LSynth part (so that all LSynth parts become a single mesh)
         if self.isLSynthPart:
@@ -1351,15 +1359,18 @@ class BlenderMaterials:
         if alpha == 1.0:
             # Solid bricks
             diffuse = BlenderMaterials.__nodeDiffuse(nodes, diffColour, 0.0, -12, 154)
-            glossy  = BlenderMaterials.__nodeGlossy(nodes, (1.0, 1.0, 1.0, 1.0), 0.2, 'BECKMANN', -12, -46)
+            glossy  = BlenderMaterials.__nodeGlossy(nodes, (1.0, 1.0, 1.0, 1.0), 0.4, 'BECKMANN', -12, -46)
+            fresnel = BlenderMaterials.__nodeFresnel(nodes, 1.52, -34, 260)
 
+            links.new(fresnel.outputs[0], mixTwo.inputs[0])
             links.new(diffuse.outputs[0], mixTwo.inputs[1])
             links.new(glossy.outputs[0],  mixTwo.inputs[2])
         else:
             # Transparent bricks
             glass   = BlenderMaterials.__nodeGlass(nodes, diffColour, 0.4, 1.16, 'BECKMANN', -42, 154)
             glossy  = BlenderMaterials.__nodeGlossy(nodes, (1.0, 1.0, 1.0, 1.0), 0.2, 'GGX', -42, -26)
-            fresnel = BlenderMaterials.__nodeFresnel(nodes, 1.46, -34, 260)
+            fresnel = BlenderMaterials.__nodeFresnel(nodes, 1.52, -34, 260)
+
             links.new(fresnel.outputs[0], mixTwo.inputs[0])
             links.new(glass.outputs[0],   mixTwo.inputs[1])
             links.new(glossy.outputs[0],  mixTwo.inputs[2])
@@ -1549,12 +1560,25 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
                 ))
                 mesh.transform(gapsScaleMatrix)
 
-            # Remove doubles
-            if Options.removeDoubles and not node.file.isDoubleSided:
+            # Calculate what we need to do next
+            recalculateNormals = node.file.isDoubleSided and (Options.resolveAmbiguousNormals == "guess")
+            keepDoubleSided    = node.file.isDoubleSided and (Options.resolveAmbiguousNormals == "double")
+            removeDoubles      = Options.removeDoubles and not keepDoubleSided
+            bmeshNeeded        = removeDoubles or recalculateNormals
+
+            if bmeshNeeded:
                 bm = bmesh.new()
                 bm.from_mesh(ob.data)
                 bm.faces.ensure_lookup_table()
-                bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=0.0005)
+
+                # Remove doubles
+                if removeDoubles:
+                    bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=0.0005)
+
+                # Recalculate normals
+                if recalculateNormals:
+                    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+
                 bm.to_mesh(ob.data)
 
             # Smooth shading
@@ -1715,7 +1739,3 @@ def loadFromFile(context, filename, isFullFilepath=True):
 
     debugPrint("Load Done")
     return rootOb
-
-# **************************************************************************************
-if __name__ == "__main__":
-    loadFromFile("3001.dat", False)

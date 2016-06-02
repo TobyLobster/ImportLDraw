@@ -97,7 +97,7 @@ class Preferences():
                 self.__config.write(configfile)
             return True
         except Exception:
-            # Fail silently
+            # Fail gracefully
             e = sys.exc_info()[0]
             debugPrint("WARNING: Could not save preferences. {0}".format(e))
             return False
@@ -131,8 +131,8 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
 
     importScale = FloatProperty(
         name="Scale",
-        description="Sets a scale for the model. LeoCAD uses a scale of 0.04",
-        default=prefs.get("scale", 0.04)
+        description="Sets a scale for the model.",
+        default=prefs.get("scale", 0.01)
     )
 
     resPrims = EnumProperty(
@@ -172,7 +172,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
     gapsSize = FloatProperty(
         name="Space",
         description="Amount of space between each part",
-        default=prefs.get("gapWidth", 0.04)
+        default=prefs.get("gapWidth", 0.01)
     )
 
     linkParts = BoolProperty(
@@ -217,6 +217,16 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         default=prefs.get("instanceStuds", False)
     )
 
+    resolveNormals = EnumProperty(
+        name="Resolve ambiguous normals option",
+        description="Some older LDraw parts have faces with ambiguous normals, this specifies what do do with them.",
+        default=prefs.get("resolveNormals", "guess"),
+        items=(
+            ("guess", "Recalculate Normals", "Uses Blender's Recalculate Normals to get a consistent set of normals"),
+            ("double", "Two faces back to back", "Two faces are added with their normals pointing in opposite directions"),
+        )
+    )
+
     def draw(self, context):
         """Display import options."""
 
@@ -244,8 +254,10 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         box.prop(self, "numberNodes")
         box.prop(self, "flatten")
 
+        box.label("Resolve Ambiguous Normals:", icon='EDIT')
+        box.prop(self, "resolveNormals", expand=True)
+
         #box.label("Additional Options", icon='PREFERENCES')
-        #box.label("Model Cleanup", icon='EDIT')
 
     def execute(self, context):
         """Start the import process."""
@@ -265,6 +277,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("useUnofficialParts",    self.useUnofficialParts)
         ImportLDrawOps.prefs.set("useLogoStuds",          self.useLogoStuds)
         ImportLDrawOps.prefs.set("instanceStuds",         self.instanceStuds)
+        ImportLDrawOps.prefs.set("resolveNormals",        self.resolveNormals)
         ImportLDrawOps.prefs.save()
 
         # Set import options and import
@@ -289,6 +302,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.Options.useLSynthParts     = True
         loadldraw.Options.LSynthDirectory    = os.path.join(os.path.dirname(__file__), "lsynth")
         loadldraw.Options.studLogoDirectory  = os.path.join(os.path.dirname(__file__), "studs")
+        loadldraw.Options.resolveAmbiguousNormals = self.resolveNormals
 
         loadldraw.loadFromFile(self, self.filepath)
         return {'FINISHED'}
