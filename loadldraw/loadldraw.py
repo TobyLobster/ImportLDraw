@@ -50,7 +50,7 @@ class Options:
 
     # Full filepath to ldraw folder. If empty, some standard locations are attempted
     ldrawDirectory     = r""            # Full filepath to the ldraw parts library (searches some standard locations if left blank)
-    scale              = 0.04           # Size of the lego model to create. (0.04 is LeoCAD scale)
+    scale              = 0.01           # Size of the lego model to create. (0.04 is LeoCAD scale)
     useUnofficialParts = True           # Additionally searches <ldraw-dir>/unofficial/parts and /p for files
     resolution         = "Standard"     # Choose from "High", "Standard", or "Low"
     defaultColour      = "4"            # Default colour ("4" = red)
@@ -61,9 +61,9 @@ class Options:
     smoothShading      = True           # Smooth the surface normals (recommended)
     edgeSplit          = True           # Edge split modifier (recommended if you use smoothShading)
     gaps               = True           # Introduces a tiny space between each brick
-    gapWidth           = 0.04           # Width of gap between bricks (in Blender units)
+    gapWidth           = 0.01           # Width of gap between bricks (in Blender units)
     positionObjectOnGroundAtOrigin = True   # Centre the object at the origin, sitting on the z=0 plane
-    flattenHierarchy   = True           # All parts are under the root object - no sub-models
+    flattenHierarchy   = False          # All parts are under the root object - no sub-models
 
     # We have the option of including the 'LEGO' logo on each stud
     useLogoStuds       = False          # Use the studs with the 'LEGO' logo on them
@@ -79,6 +79,10 @@ class Options:
     # Older LDraw parts (parts not yet BFC certified) have ambiguous normals.
     # We resolve this by creating double sided faces ("double") or by taking a best guess ("guess")
     resolveAmbiguousNormals = "guess"   # How to resolve ambiguous normals
+    
+    overwriteExistingMaterials = True   # If there's an existing material with the same name, do we overwrite it, or use it?
+    overwriteExistingMeshes = True      # If there's an existing mesh with the same name, do we overwrite it, or use it?
+    verbose            = 1              # 1 = Show messages while working, 0 = Only show warnings/errors
 
 # **************************************************************************************
 # Globals
@@ -87,9 +91,10 @@ globalObjectsToAdd = []         # Blender objects to add to the scene
 globalMin = None
 globalMax = None
 globalContext = None
+globalWeldDistance = 0.0005
 
 # **************************************************************************************
-def debugPrint(message):
+def internalPrint(message):
     """Debug print with identification timestamp."""
 
     # Current timestamp (with milliseconds trimmed to two places)
@@ -103,12 +108,19 @@ def debugPrint(message):
         globalContext.report({'INFO'}, message)
 
 # **************************************************************************************
+def debugPrint(message):
+    """Debug print with identification timestamp."""
+
+    if Options.verbose > 0:
+        internalPrint(message)
+
+# **************************************************************************************
 def printWarningOnce(key, message=None):
     if message is None:
         message = key
 
     if key not in Configure.warningSuppression:
-        debugPrint("WARNING: {0}".format(message))
+        internalPrint("WARNING: {0}".format(message))
         Configure.warningSuppression[key] = True
 
         global globalContext
@@ -117,7 +129,7 @@ def printWarningOnce(key, message=None):
 
 # **************************************************************************************
 def printError(message):
-    debugPrint("ERROR: {0}".format(message))
+    internalPrint("ERROR: {0}".format(message))
 
     global globalContext
     if globalContext is not None:
@@ -170,6 +182,12 @@ class Configure:
         # Always search for parts in the 'models' folder
         Configure.__appendPath(os.path.join(Configure.ldrawInstallDirectory, "models"))
 
+        # Search for stud logo parts
+        if Options.useLogoStuds and Options.studLogoDirectory != "":
+            if Options.resolution == "Low":
+                Configure.__appendPath(os.path.join(Options.studLogoDirectory, "8"))
+            Configure.__appendPath(Options.studLogoDirectory)
+
         # Search unofficial parts        
         if Options.useUnofficialParts:
             Configure.__appendPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "parts"))
@@ -187,10 +205,6 @@ class Configure:
             else:
                 Configure.__appendPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "lsynth"))
             debugPrint("Use LSynth Parts requested")
-
-        # Search for stud logo parts
-        if Options.useLogoStuds and Options.studLogoDirectory != "":
-            Configure.__appendPath(Options.studLogoDirectory)
 
         # Search official parts
         Configure.__appendPath(os.path.join(Configure.ldrawInstallDirectory, "parts"))
@@ -669,9 +683,11 @@ class LDrawGeometry:
         self.faceColours = []
         self.culling = []
         self.windingCCW = []
+        self.edges = []
+        self.edgeIndices = []
 
-    def parse_face_line(self, parameters, cull, ccw):
-        """Parse a face line"""
+    def parseFace(self, parameters, cull, ccw):
+        """Parse a face from parameters"""
 
         num_points = int(parameters[0])
         colourName = parameters[1]
@@ -698,6 +714,19 @@ class LDrawGeometry:
         self.culling.append(cull)
         self.windingCCW.append(ccw)
 
+    def parseEdge(self, parameters):
+        """Parse an edge from parameters"""
+
+        colourName = parameters[1]
+        if colourName == "24":
+            blenderPos1 = Math.scaleMatrix * mathutils.Vector( (float(parameters[2]),
+                                                                float(parameters[3]), 
+                                                                float(parameters[4])) )
+            blenderPos2 = Math.scaleMatrix * mathutils.Vector( (float(parameters[5]),
+                                                                float(parameters[6]), 
+                                                                float(parameters[7])) )
+            self.edges.append((blenderPos1, blenderPos2))
+
     def verify(self, face, numPoints):
         for i in face:
             assert i < numPoints
@@ -705,7 +734,7 @@ class LDrawGeometry:
 
     def appendGeometry(self, geometry, matrix, cull, invert):
 
-        # Add face information
+        # Append face information
         pointCount = len(self.points)
         newIndices = []
         for index, face in enumerate(geometry.faces):
@@ -752,6 +781,12 @@ class LDrawGeometry:
 
         self.faceColours.extend(newIndices)
         assert len(self.faces) == len(self.faceColours)
+
+        # Append edge information
+        newEdges = []
+        for edge in geometry.edges:
+            newEdges.append( (matrix * edge[0], matrix * edge[1]) )
+        self.edges.extend(newEdges)
 
 
 # **************************************************************************************
@@ -830,7 +865,15 @@ class LDrawNode:
         for child in self.file.childNodes:
             child.printBFC(depth + 1)
 
-    def getBlenderGeometry(self, realColourName, accumCull=True, accumInvert=False):
+    def getBFCCode(accumCull, accumInvert, bfcCull, bfcInverted):
+        index = (8 if accumCull else 0) +  (4 if accumInvert else 0) + (2 if bfcCull else 0) + (1 if bfcInverted else 0)
+        # Normally meshes are culled and not inverted, so don't bother with a code in this case
+        if index == 10:
+            return ""
+        # If this is out of the ordinary, add a code that makes it a unique name to cache the mesh properly
+        return "_{0}".format(index)
+
+    def getBlenderGeometry(self, realColourName, basename, accumCull=True, accumInvert=False):
         """
         Returns the geometry for the Blender Object at this node.
 
@@ -846,6 +889,8 @@ class LDrawNode:
         accumInvert = accumInvert != self.bfcInverted
 
         ourColourName = LDrawNode.resolveColour(self.colourName, realColourName)
+        code = LDrawNode.getBFCCode(accumCull, accumInvert, self.bfcCull, self.bfcInverted)
+        meshName = "Mesh_{0}_{1}{2}".format(basename, ourColourName, code)
         key = (self.filename, ourColourName, accumCull, accumInvert, self.bfcCull, self.bfcInverted)
         bakedGeometry = CachedGeometry.getCached(key)
         if bakedGeometry is None:
@@ -862,12 +907,12 @@ class LDrawNode:
                 assert child.file is not None
                 if not child.isBlenderObjectNode():
                     childColourName = LDrawNode.resolveColour(child.colourName, ourColourName)
-                    bg = child.getBlenderGeometry(childColourName, accumCull, accumInvert)
+                    childMeshName, bg = child.getBlenderGeometry(childColourName, basename, accumCull, accumInvert)
                     bakedGeometry.appendGeometry(bg, child.matrix, self.bfcCull, self.bfcInverted)
 
             CachedGeometry.addToCache(key, bakedGeometry)
         assert len(bakedGeometry.faces) == len(bakedGeometry.faceColours)
-        return bakedGeometry
+        return (meshName, bakedGeometry)
 
 
 # **************************************************************************************
@@ -951,7 +996,18 @@ class LDrawFile:
         filename = filename.replace("\\", os.path.sep)
         name = os.path.basename(filename).lower()
 
-        return name in ("stud.dat", "stud2.dat", "stud-logo3.dat", "stud2-logo3.dat", "stud-logo4.dat", "stud2-logo4.dat", "stud-logo5.dat", "stud2-logo5.dat")
+        return name in (
+            "stud.dat",   "stud-logo.dat",   "stud-logo2.dat",   "stud-logo3.dat",   "stud-logo4.dat",   "stud-logo5.dat", 
+            "stud2.dat",  "stud2-logo.dat",  "stud2-logo2.dat",  "stud2-logo3.dat",  "stud2-logo4.dat",  "stud2-logo5.dat",
+            "stud6.dat",  "stud6-logo.dat",  "stud6-logo2.dat",  "stud6-logo3.dat",  "stud6-logo4.dat",  "stud6-logo5.dat", 
+            "stud6a.dat", "stud6a-logo.dat", "stud6a-logo2.dat", "stud6a-logo3.dat", "stud6a-logo4.dat", "stud6a-logo5.dat", 
+            "stud7.dat",  "stud7-logo.dat",  "stud7-logo2.dat",  "stud7-logo3.dat",  "stud7-logo4.dat",  "stud7-logo5.dat", 
+            "stud10.dat", "stud10-logo.dat", "stud10-logo2.dat", "stud10-logo3.dat", "stud10-logo4.dat", "stud10-logo5.dat", 
+            "stud13.dat", "stud13-logo.dat", "stud13-logo2.dat", "stud13-logo3.dat", "stud13-logo4.dat", "stud13-logo5.dat", 
+            "stud15.dat", "stud15-logo.dat", "stud15-logo2.dat", "stud15-logo3.dat", "stud15-logo4.dat", "stud15-logo5.dat", 
+            "stud20.dat", "stud20-logo.dat", "stud20-logo2.dat", "stud20-logo3.dat", "stud20-logo4.dat", "stud20-logo5.dat", 
+            "studa.dat",  "studa-logo.dat",  "studa-logo2.dat",  "studa-logo3.dat",  "studa-logo4.dat",  "studa-logo5.dat", 
+                       )
 
     def __init__(self, filename, isFullFilepath, lines = None, isSubPart=False):
         """Loads an LDraw file (LDR, L3B, DAT or MPD)"""
@@ -1002,8 +1058,8 @@ class LDrawFile:
                         self.isSubPart = True
                     if 'primitive' in partType:
                         self.isSubPart = True
-                    if 'shortcut' in partType:
-                        self.isSubPart = True
+                    #if 'shortcut' in partType:
+                    #    self.isPart = True
 
                 if parameters[1] == "BFC":
                     # If unsure about being certified yet...
@@ -1051,6 +1107,10 @@ class LDrawFile:
                     newNode = LDrawNode(new_filename, False, new_colourName, localMatrix, canCullChildNode, bfcInvertNext, processingLSynthParts, not self.isModel, False)
                     self.childNodes.append(newNode)
 
+                # Parse an edge
+                elif parameters[0] == "2":
+                    self.geometry.parseEdge(parameters)
+
                 # Parse a Face (either a triangle or a quadrilateral)
                 elif parameters[0] == "3" or parameters[0] == "4":
                     if self.bfcCertified is None:
@@ -1060,7 +1120,7 @@ class LDrawFile:
                         self.isDoubleSided = True
 
                     assert len(self.geometry.faces) == len(self.geometry.faceColours)
-                    self.geometry.parse_face_line(parameters, self.bfcCertified and bfcLocalCull, bfcWindingCCW)
+                    self.geometry.parseFace(parameters, self.bfcCertified and bfcLocalCull, bfcWindingCCW)
                     assert len(self.geometry.faces) == len(self.geometry.faceColours)
 
                 bfcInvertNext = False
@@ -1416,11 +1476,11 @@ class BlenderMaterials:
             printWarningOnce("WARNING: Could not decode {0} to a colour".format(colourName))
             return None
         return {
-            "name": colourName,
-            "colour": linearRGBA[0:3],
-            "alpha": linearRGBA[3],
-            "luminance": 0.0,
-            "material": "BASIC"
+            "name":         colourName,
+            "colour":       linearRGBA[0:3],
+            "alpha":        linearRGBA[3],
+            "luminance":    0.0,
+            "material":     "BASIC"
         }
 
     def getMaterial(colourName):
@@ -1429,8 +1489,13 @@ class BlenderMaterials:
             result = BlenderMaterials.__material_list[colourName]
             return result
 
-        # Create new material
+        # If it already exists in Blender, use that
         blenderName = "Material_{0}".format(colourName)
+        if Options.overwriteExistingMaterials is False:
+            if blenderName in bpy.data.materials:
+                return bpy.data.materials[blenderName]
+
+        # Create new material
         col = BlenderMaterials.__getColourData(colourName)
         material = BlenderMaterials.__createNodeBasedMaterial(blenderName, col)
 
@@ -1446,6 +1511,46 @@ class BlenderMaterials:
 
 
 # **************************************************************************************
+def addSharpEdges(bm, geometry, filename):
+    if geometry.edges:
+        global globalWeldDistance
+        epsilon = globalWeldDistance
+
+        bm.faces.ensure_lookup_table()
+        bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+
+        # Create kd tree for fast "find nearest points" calculation
+        kd = mathutils.kdtree.KDTree(len(bm.verts))
+        for i, v in enumerate(bm.verts):
+            kd.insert(v.co, i)
+        kd.balance()
+
+        # Create edgeIndices dictionary, which is the list of edges as pairs of indicies into our bm.verts array
+        edgeIndices = {}
+        for ind, geomEdge in enumerate(geometry.edges):
+            # Find index of nearest points in bm.verts to geomEdge[0] and geomEdge[1]
+            edges0 = [index for (co, index, dist) in kd.find_range(geomEdge[0], epsilon)]
+            edges1 = [index for (co, index, dist) in kd.find_range(geomEdge[1], epsilon)]
+
+            #if (len(edges0) > 2):
+            #    printWarningOnce("Found {1} vertices near {0} in file {2}".format(geomEdge[0], len(edges0), filename))
+            #if (len(edges1) > 2):
+            #    printWarningOnce("Found {1} vertices near {0} in file {2}".format(geomEdge[1], len(edges1), filename))
+
+            for e0 in edges0:
+                for e1 in edges1:
+                    edgeIndices[(e0, e1)] = True
+                    edgeIndices[(e1, e0)] = True
+
+        # Find the appropriate mesh edges and make them sharp (i.e. not smooth)
+        for meshEdge in bm.edges:
+            v0 = meshEdge.verts[0].index
+            v1 = meshEdge.verts[1].index
+            if (v0, v1) in edgeIndices:
+                meshEdge.smooth = False
+
+# **************************************************************************************
 def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options.defaultColour, blenderParentTransform=Math.identityMatrix, localToWorldSpaceMatrix=Math.identityMatrix, blenderNodeParent=None):
     """
     Creates a Blender Object for the node given and (recursively) for all it's children as required.
@@ -1454,6 +1559,7 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
 
     global globalBrickCount
     global globalObjectsToAdd
+    global globalWeldDistance
 
     ob = None
     newMeshCreated = False
@@ -1461,22 +1567,28 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
     if node.isBlenderObjectNode():
         # Have we cached this mesh already?
         ourColourName = LDrawNode.resolveColour(node.colourName, realColourName)
-        geometry = node.getBlenderGeometry(ourColourName)
+        meshName, geometry = node.getBlenderGeometry(ourColourName, name)
         if geometry.points:
+            # Have we already cached this mesh?
             if Options.createInstances and hasattr(geometry, 'mesh'):
                 mesh = geometry.mesh
             else:
-                # Create new mesh
-                # debugPrint("Creating Mesh for node {0}".format(node.filename))
-                mesh = bpy.data.meshes.new("Mesh_{0}".format(name))
+                # Does this mesh already exist in Blender?
+                existingMesh = meshName in bpy.data.meshes
+                if not Options.overwriteExistingMeshes and existingMesh:
+                    mesh = bpy.data.meshes[meshName]
+                else:
+                    # Create new mesh
+                    # debugPrint("Creating Mesh for node {0}".format(node.filename))
+                    mesh = bpy.data.meshes.new(meshName)
 
-                points = list(map((lambda p: p.to_tuple()), geometry.points))
+                    points = list(map((lambda p: p.to_tuple()), geometry.points))
 
-                mesh.from_pydata(points, [], geometry.faces)
-                mesh.validate()
-                mesh.update()
+                    mesh.from_pydata(points, [], geometry.faces)
+                    mesh.validate()
+                    mesh.update()
 
-                newMeshCreated = True
+                    newMeshCreated = True
 
                 assert len(mesh.polygons) == len(geometry.faces)
                 assert len(geometry.faces) == len(geometry.faceColours)
@@ -1520,6 +1632,31 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
             # (e.g. we use bmesh.* operations instead). 
             # See discussion: http://blender.stackexchange.com/questions/7358/python-performance-with-blender-operators
 
+            # Calculate what we need to do next
+            recalculateNormals = node.file.isDoubleSided and (Options.resolveAmbiguousNormals == "guess")
+            keepDoubleSided    = node.file.isDoubleSided and (Options.resolveAmbiguousNormals == "double")
+            removeDoubles      = Options.removeDoubles and not keepDoubleSided
+
+            bm = bmesh.new()
+            bm.from_mesh(ob.data)
+            bm.faces.ensure_lookup_table()
+            bm.verts.ensure_lookup_table()
+            bm.edges.ensure_lookup_table()
+
+            # Remove doubles
+            if removeDoubles:
+                bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=globalWeldDistance)
+
+            # Recalculate normals
+            if recalculateNormals:
+                bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+
+            # Add sharp edges
+            addSharpEdges(bm, geometry, name)
+
+            bm.to_mesh(ob.data)
+            bm.free()
+
             # Scale for Gaps
             if Options.gaps and node.file.isPart:
                 # Distance between gaps is controlled by Options.gapWidth
@@ -1560,27 +1697,6 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
                 ))
                 mesh.transform(gapsScaleMatrix)
 
-            # Calculate what we need to do next
-            recalculateNormals = node.file.isDoubleSided and (Options.resolveAmbiguousNormals == "guess")
-            keepDoubleSided    = node.file.isDoubleSided and (Options.resolveAmbiguousNormals == "double")
-            removeDoubles      = Options.removeDoubles and not keepDoubleSided
-            bmeshNeeded        = removeDoubles or recalculateNormals
-
-            if bmeshNeeded:
-                bm = bmesh.new()
-                bm.from_mesh(ob.data)
-                bm.faces.ensure_lookup_table()
-
-                # Remove doubles
-                if removeDoubles:
-                    bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=0.0005)
-
-                # Recalculate normals
-                if recalculateNormals:
-                    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
-
-                bm.to_mesh(ob.data)
-
             # Smooth shading
             if Options.smoothShading:
                 # We would like to avoid using bpy.ops functions altogether since it 
@@ -1611,8 +1727,9 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
         # Add edge split modifier to each instance
         if Options.edgeSplit:
             if mesh:
-                edges = ob.modifiers.new("Edge Split", type='EDGE_SPLIT')
-                edges.split_angle = math.radians(30.0)
+                edgeModifier = ob.modifiers.new("Edge Split", type='EDGE_SPLIT')
+                edgeModifier.use_edge_sharp = True
+                edgeModifier.split_angle = math.radians(30.0)
 
         # Keep track of the global space bounding box, for positioning the object at the end
         # Notice that we do this after scaling from Options.gaps
@@ -1646,7 +1763,7 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
     return ob
 
 # **************************************************************************************
-def addStudFileToCache(relativePath, name):
+def addFileToCache(relativePath, name):
     """Loads and caches an LDraw file in the cache of files"""
 
     file = LDrawFile(relativePath, False, None, True)
@@ -1677,8 +1794,16 @@ def loadFromFile(context, filename, isFullFilepath=True):
     if Options.useLogoStuds:
         debugPrint("Loading stud files")
         # Load stud logo files into cache
-        addStudFileToCache("stud-logo" + Options.logoStudVersion + ".dat", "stud.dat")
-        addStudFileToCache("stud2-logo" + Options.logoStudVersion + ".dat", "stud2.dat")
+        addFileToCache("stud-logo"   + Options.logoStudVersion + ".dat", "stud.dat")
+        addFileToCache("stud2-logo"  + Options.logoStudVersion + ".dat", "stud2.dat")
+        addFileToCache("stud6-logo"  + Options.logoStudVersion + ".dat", "stud6.dat")
+        addFileToCache("stud6a-logo" + Options.logoStudVersion + ".dat", "stud6a.dat")
+        addFileToCache("stud7-logo"  + Options.logoStudVersion + ".dat", "stud7.dat")
+        addFileToCache("stud10-logo" + Options.logoStudVersion + ".dat", "stud10.dat")
+        addFileToCache("stud13-logo" + Options.logoStudVersion + ".dat", "stud13.dat")
+        addFileToCache("stud15-logo" + Options.logoStudVersion + ".dat", "stud15.dat")
+        addFileToCache("stud20-logo" + Options.logoStudVersion + ".dat", "stud20.dat")
+        addFileToCache("studa-logo"  + Options.logoStudVersion + ".dat", "studa.dat")
 
     # Load and parse file to create geometry
     filename = os.path.expanduser(filename)
@@ -1690,6 +1815,7 @@ def loadFromFile(context, filename, isFullFilepath=True):
 
     # Fix top level rotation from LDraw coordinate space to Blender coordinate space
     node.file.geometry.points = list(map((lambda p: Math.rotationMatrix * p), node.file.geometry.points))
+    node.file.geometry.edges  = list(map((lambda e: (Math.rotationMatrix * e[0], Math.rotationMatrix * e[1])), node.file.geometry.edges))
     for childNode in node.file.childNodes:
         childNode.matrix = Math.rotationMatrix * childNode.matrix
 

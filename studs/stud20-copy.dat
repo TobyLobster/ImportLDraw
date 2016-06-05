@@ -1,0 +1,11 @@
+0 Stud Duplo
+0 Name: stud20.dat
+0 Author: Steffen [Steffen]
+0 !LDRAW_ORG Primitive UPDATE 2013-01
+0 !LICENSE Redistributable under CCAL version 2.0 : see CAreadme.txt
+
+0 BFC CERTIFY CCW
+
+0 !HISTORY 2013-07-21 [PTadmin] Official Update 2013-01
+
+1 16 0 -11 0 12 0 0 0 11 0 0 0 12 4-4cylc.dat

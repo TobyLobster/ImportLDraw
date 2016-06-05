@@ -25,7 +25,7 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 + **Linked studs** - studs can also share the same mesh.
 + Studs can include the **LEGO logo** on them, adding extra geometry.
 + **Gaps between bricks** - Optionally adds a small space between each brick, as in real life.
-+ **Face smoothing** option with Edge-Split Modifier for smooth curved surfaces.
++ **Smart face smoothing** - Uses Edge-Split Modifier and Sharp Edges derived from Ldraw lines, for smooth curved surfaces and sharp corners.
 + **Fast** - even large models can be imported in seconds.
 
 ![Ghostbusters](./images/ghostbusters_960.png)

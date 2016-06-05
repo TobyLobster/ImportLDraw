@@ -1,0 +1,12 @@
+0 Stud for Electric Light & Sound Brick  2 x  2 x  1.333 with LEGO Logo - 3D with Rounded Top
+0 Name: stud13-logo4.dat
+0 Author: Toby Nelson [tnelson]
+0 !LDRAW_ORG Unofficial_Primitive
+0 !LICENSE Redistributable under CCAL version 2.0 : see CAreadme.txt
+
+0 BFC CERTIFY CCW
+
+0 !HISTORY 2016-06-03 [tnelson] Created 2016-06-03
+
+1 16 0 0 0 1 0 0 0 0.95 0 0 0 1 stud13-copy.dat
+1 16 0 -3.8 0 1 0 0 0 1 0 0 0 1 logo4.dat

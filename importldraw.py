@@ -303,6 +303,8 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.Options.LSynthDirectory    = os.path.join(os.path.dirname(__file__), "lsynth")
         loadldraw.Options.studLogoDirectory  = os.path.join(os.path.dirname(__file__), "studs")
         loadldraw.Options.resolveAmbiguousNormals = self.resolveNormals
+        loadldraw.Options.overwriteExistingMaterials = False
+        loadldraw.Options.overwriteExistingMeshes    = False
 
         loadldraw.loadFromFile(self, self.filepath)
         return {'FINISHED'}
