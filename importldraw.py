@@ -57,6 +57,7 @@ flattenHierarchy   = False
 useUnofficialParts = True
 useLogoStuds       = False
 instanceStuds      = False
+(etc)
 """
 
 
@@ -227,6 +228,12 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         )
     )
 
+    bevelEdges = BoolProperty(
+        name="Bevel edges",
+        description="Adds a Bevel modifier for rounding off sharp edges.",
+        default=prefs.get("bevelEdges", False)
+    )
+
     def draw(self, context):
         """Display import options."""
 
@@ -236,20 +243,18 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         box.label("LDraw filepath:", icon='FILESEL')
         box.prop(self, "ldrawPath")
         box.prop(self, "importScale")
-        #box.label("Parts", icon='MOD_BUILD')
         box.prop(self, "colourScheme", expand=True)
         box.prop(self, "resPrims", expand=True)
         box.prop(self, "smoothParts")
+        box.prop(self, "bevelEdges")
         box.prop(self, "addGaps")
         box.prop(self, "gapsSize")
         box.prop(self, "linkParts")
         box.prop(self, "useUnofficialParts")
 
-        #box.label("Studs", icon='MOD_BUILD')
         box.prop(self, "useLogoStuds")
         box.prop(self, "instanceStuds")
 
-        #box.label("Objects", icon='MOD_BUILD')
         box.prop(self, "positionOnGround")
         box.prop(self, "numberNodes")
         box.prop(self, "flatten")
@@ -257,6 +262,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         box.label("Resolve Ambiguous Normals:", icon='EDIT')
         box.prop(self, "resolveNormals", expand=True)
 
+        #box.label("Parts", icon='MOD_BUILD')
         #box.label("Additional Options", icon='PREFERENCES')
 
     def execute(self, context):
@@ -267,6 +273,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("scale",                 self.importScale)
         ImportLDrawOps.prefs.set("resolution",            self.resPrims)
         ImportLDrawOps.prefs.set("smoothShading",         self.smoothParts)
+        ImportLDrawOps.prefs.set("bevelEdges",            self.bevelEdges)
         ImportLDrawOps.prefs.set("useColourScheme",       self.colourScheme)
         ImportLDrawOps.prefs.set("gaps",                  self.addGaps)
         ImportLDrawOps.prefs.set("gapWidth",              self.gapsSize)
@@ -305,6 +312,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.Options.resolveAmbiguousNormals = self.resolveNormals
         loadldraw.Options.overwriteExistingMaterials = False
         loadldraw.Options.overwriteExistingMeshes    = False
+        loadldraw.Options.addBevelModifier           = self.bevelEdges
 
         loadldraw.loadFromFile(self, self.filepath)
         return {'FINISHED'}

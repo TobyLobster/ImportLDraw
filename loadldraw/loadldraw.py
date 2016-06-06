@@ -83,6 +83,31 @@ class Options:
     overwriteExistingMaterials = True   # If there's an existing material with the same name, do we overwrite it, or use it?
     overwriteExistingMeshes = True      # If there's an existing mesh with the same name, do we overwrite it, or use it?
     verbose            = 1              # 1 = Show messages while working, 0 = Only show warnings/errors
+    
+    addBevelModifier   = True           # Adds a bevel modifier to each part (for rounded edges)
+
+    def meshOptionsString():
+        """These options change the mesh, so if they change, a new mesh needs to be cached"""
+
+        return "_".join([str(Options.scale),
+                         str(Options.useUnofficialParts),
+                         str(Options.resolution), 
+                         str(Options.defaultColour),
+                         str(Options.createInstances), 
+                         str(Options.useColourScheme), 
+                         str(Options.removeDoubles),
+                         str(Options.smoothShading), 
+                         str(Options.gaps),
+                         str(Options.gapWidth),
+                         str(Options.flattenHierarchy),
+                         str(Options.useLogoStuds),
+                         str(Options.logoStudVersion),
+                         str(Options.instanceStuds),
+                         str(Options.useLSynthParts),
+                         str(Options.LSynthDirectory),
+                         str(Options.studLogoDirectory),
+                         str(Options.resolveAmbiguousNormals),
+                         str(Options.addBevelModifier)])
 
 # **************************************************************************************
 # Globals
@@ -997,16 +1022,16 @@ class LDrawFile:
         name = os.path.basename(filename).lower()
 
         return name in (
-            "stud.dat",   "stud-logo.dat",   "stud-logo2.dat",   "stud-logo3.dat",   "stud-logo4.dat",   "stud-logo5.dat", 
-            "stud2.dat",  "stud2-logo.dat",  "stud2-logo2.dat",  "stud2-logo3.dat",  "stud2-logo4.dat",  "stud2-logo5.dat",
-            "stud6.dat",  "stud6-logo.dat",  "stud6-logo2.dat",  "stud6-logo3.dat",  "stud6-logo4.dat",  "stud6-logo5.dat", 
-            "stud6a.dat", "stud6a-logo.dat", "stud6a-logo2.dat", "stud6a-logo3.dat", "stud6a-logo4.dat", "stud6a-logo5.dat", 
-            "stud7.dat",  "stud7-logo.dat",  "stud7-logo2.dat",  "stud7-logo3.dat",  "stud7-logo4.dat",  "stud7-logo5.dat", 
-            "stud10.dat", "stud10-logo.dat", "stud10-logo2.dat", "stud10-logo3.dat", "stud10-logo4.dat", "stud10-logo5.dat", 
-            "stud13.dat", "stud13-logo.dat", "stud13-logo2.dat", "stud13-logo3.dat", "stud13-logo4.dat", "stud13-logo5.dat", 
-            "stud15.dat", "stud15-logo.dat", "stud15-logo2.dat", "stud15-logo3.dat", "stud15-logo4.dat", "stud15-logo5.dat", 
-            "stud20.dat", "stud20-logo.dat", "stud20-logo2.dat", "stud20-logo3.dat", "stud20-logo4.dat", "stud20-logo5.dat", 
-            "studa.dat",  "studa-logo.dat",  "studa-logo2.dat",  "studa-logo3.dat",  "studa-logo4.dat",  "studa-logo5.dat", 
+            "stud.dat",   "stud-logo3.dat",   "stud-logo4.dat",   "stud-logo5.dat", 
+            "stud2.dat",  "stud2-logo3.dat",  "stud2-logo4.dat",  "stud2-logo5.dat",
+            "stud6.dat",  "stud6-logo3.dat",  "stud6-logo4.dat",  "stud6-logo5.dat", 
+            "stud6a.dat", "stud6a-logo3.dat", "stud6a-logo4.dat", "stud6a-logo5.dat", 
+            "stud7.dat",  "stud7-logo3.dat",  "stud7-logo4.dat",  "stud7-logo5.dat", 
+            "stud10.dat", "stud10-logo3.dat", "stud10-logo4.dat", "stud10-logo5.dat", 
+            "stud13.dat", "stud13-logo3.dat", "stud13-logo4.dat", "stud13-logo5.dat", 
+            "stud15.dat", "stud15-logo3.dat", "stud15-logo4.dat", "stud15-logo5.dat", 
+            "stud20.dat", "stud20-logo3.dat", "stud20-logo4.dat", "stud20-logo5.dat", 
+            "studa.dat",  "studa-logo3.dat",  "studa-logo4.dat",  "studa-logo5.dat", 
                        )
 
     def __init__(self, filename, isFullFilepath, lines = None, isSubPart=False):
@@ -1084,6 +1109,10 @@ class LDrawFile:
                             processingLSynthParts = True
                         if parameters[3] == "END":
                             processingLSynthParts = False
+                if parameters[1] == "!LDCAD":
+                    if parameters[2] == "GENERATED":
+                        processingLSynthParts = True
+
             else:
                 if self.bfcCertified is None:
                     self.bfcCertified = False
@@ -1509,7 +1538,6 @@ class BlenderMaterials:
     def clearCache():
         BlenderMaterials.__material_list = {}
 
-
 # **************************************************************************************
 def addSharpEdges(bm, geometry, filename):
     if geometry.edges:
@@ -1543,12 +1571,49 @@ def addSharpEdges(bm, geometry, filename):
                     edgeIndices[(e0, e1)] = True
                     edgeIndices[(e1, e0)] = True
 
+        # Find layer for bevel weights
+        if 'BevelWeight' in bm.edges.layers.bevel_weight:
+            bwLayer = bm.edges.layers.bevel_weight['BevelWeight']
+        else:
+            bwLayer = None
+
         # Find the appropriate mesh edges and make them sharp (i.e. not smooth)
         for meshEdge in bm.edges:
             v0 = meshEdge.verts[0].index
             v1 = meshEdge.verts[1].index
             if (v0, v1) in edgeIndices:
+                # Make edge sharp
                 meshEdge.smooth = False
+
+                # Add bevel weight
+                if bwLayer is not None:
+                    meshEdge[bwLayer] = 1.0
+
+# **************************************************************************************
+def meshIsReusable(meshName, geometry):
+    meshExists = meshName in bpy.data.meshes
+    #debugPrint("meshIsReusable says {0} exists = {1}.".format(meshName, meshExists))
+    if meshExists and not Options.overwriteExistingMeshes:
+        mesh = bpy.data.meshes[meshName]
+
+        #debugPrint("meshIsReusable testing")
+        # A mesh loses it's materials information when it is no longer in use.
+        # We must check the number of faces matches, otherwise we can't re-set the 
+        # materials.
+        if mesh.users == 0 and (len(mesh.polygons) != len(geometry.faces)):
+            #debugPrint("meshIsReusable says no users and num faces changed.")
+            return False
+        
+        # If options have changed (e.g. scale) we should not reuse the same mesh.
+        if 'customMeshOptions' in mesh.keys():
+            #debugPrint("meshIsReusable found custom options.")
+            #debugPrint("mesh['customMeshOptions'] = {0}".format(mesh['customMeshOptions']))
+            #debugPrint("Options.meshOptionsString() = {0}".format(Options.meshOptionsString()))
+            if mesh['customMeshOptions'] == Options.meshOptionsString():
+                #debugPrint("meshIsReusable found custom options - match OK.")
+                return True
+            #debugPrint("meshIsReusable found custom options - DON'T match.")
+    return False
 
 # **************************************************************************************
 def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options.defaultColour, blenderParentTransform=Math.identityMatrix, localToWorldSpaceMatrix=Math.identityMatrix, blenderNodeParent=None):
@@ -1573,9 +1638,8 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
             if Options.createInstances and hasattr(geometry, 'mesh'):
                 mesh = geometry.mesh
             else:
-                # Does this mesh already exist in Blender?
-                existingMesh = meshName in bpy.data.meshes
-                if not Options.overwriteExistingMeshes and existingMesh:
+                # Does this mesh already exist in Blender? 
+                if meshIsReusable(meshName, geometry):
                     mesh = bpy.data.meshes[meshName]
                 else:
                     # Create new mesh
@@ -1587,21 +1651,26 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
                     mesh.from_pydata(points, [], geometry.faces)
                     mesh.validate()
                     mesh.update()
+                    
+                    # Set a custom parameter to record the options used to create this mesh
+                    # Used for caching.
+                    mesh['customMeshOptions'] = Options.meshOptionsString()
 
                     newMeshCreated = True
 
-                assert len(mesh.polygons) == len(geometry.faces)
-                assert len(geometry.faces) == len(geometry.faceColours)
-
                 # Create materials and assign material to each polygon
-                for i, f in enumerate(mesh.polygons):
-                    material = BlenderMaterials.getMaterial(geometry.faceColours[i])
-                    if material is not None:
-                        if mesh.materials.get(material.name) is None:
-                            mesh.materials.append(material)
-                        f.material_index = mesh.materials.find(material.name)
-                    else:
-                        printWarningOnce("Could not find material '{0}' in mesh '{1}'.".format(geometry.faceColours[i], name))
+                if mesh.users == 0:
+                    assert len(mesh.polygons) == len(geometry.faces)
+                    assert len(geometry.faces) == len(geometry.faceColours)
+
+                    for i, f in enumerate(mesh.polygons):
+                        material = BlenderMaterials.getMaterial(geometry.faceColours[i])
+                        if material is not None:
+                            if mesh.materials.get(material.name) is None:
+                                mesh.materials.append(material)
+                            f.material_index = mesh.materials.find(material.name)
+                        else:
+                            printWarningOnce("Could not find material '{0}' in mesh '{1}'.".format(geometry.faceColours[i], name))
 
                 # Cache mesh
                 geometry.mesh = mesh
@@ -1632,6 +1701,11 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
             # (e.g. we use bmesh.* operations instead). 
             # See discussion: http://blender.stackexchange.com/questions/7358/python-performance-with-blender-operators
 
+            # Use bevel weights (added to sharp edges)
+            ob.data.use_customdata_edge_bevel = True
+            #for edge in ob.data.edges:
+            #    edge.bevel_weight = 0.7
+
             # Calculate what we need to do next
             recalculateNormals = node.file.isDoubleSided and (Options.resolveAmbiguousNormals == "guess")
             keepDoubleSided    = node.file.isDoubleSided and (Options.resolveAmbiguousNormals == "double")
@@ -1656,6 +1730,8 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
 
             bm.to_mesh(ob.data)
             bm.free()
+            
+            ob.data.show_edge_sharp = True
 
             # Scale for Gaps
             if Options.gaps and node.file.isPart:
@@ -1723,6 +1799,16 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
 
                 # Remove object from scene
                 bpy.context.scene.objects.unlink(ob)
+
+        # Add Bevel modifier to each instance
+        if Options.addBevelModifier:
+            if mesh:
+                bevelModifier = ob.modifiers.new("Bevel", type='BEVEL')
+                bevelModifier.width = 0.4 * Options.scale
+                bevelModifier.segments = 4
+                bevelModifier.profile = 0.5
+                bevelModifier.limit_method = 'WEIGHT'
+                bevelModifier.use_clamp_overlap = True
 
         # Add edge split modifier to each instance
         if Options.edgeSplit:
