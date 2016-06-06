@@ -1538,6 +1538,7 @@ class BlenderMaterials:
     def clearCache():
         BlenderMaterials.__material_list = {}
 
+
 # **************************************************************************************
 def addSharpEdges(bm, geometry, filename):
     if geometry.edges:
@@ -1703,8 +1704,6 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
 
             # Use bevel weights (added to sharp edges)
             ob.data.use_customdata_edge_bevel = True
-            #for edge in ob.data.edges:
-            #    edge.bevel_weight = 0.7
 
             # Calculate what we need to do next
             recalculateNormals = node.file.isDoubleSided and (Options.resolveAmbiguousNormals == "guess")
@@ -1731,6 +1730,7 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
             bm.to_mesh(ob.data)
             bm.free()
             
+            # Show the sharp edges in Edit Mode
             ob.data.show_edge_sharp = True
 
             # Scale for Gaps
