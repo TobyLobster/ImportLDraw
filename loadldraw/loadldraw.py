@@ -64,6 +64,7 @@ class Options:
     gapWidth           = 0.01           # Width of gap between bricks (in Blender units)
     positionObjectOnGroundAtOrigin = True   # Centre the object at the origin, sitting on the z=0 plane
     flattenHierarchy   = False          # All parts are under the root object - no sub-models
+    flattenGroups      = False          # All LEOCad groups are ignored - no groups
 
     # We have the option of including the 'LEGO' logo on each stud
     useLogoStuds       = False          # Use the studs with the 'LEGO' logo on them
@@ -833,7 +834,7 @@ class LDrawGeometry:
 class LDrawNode:
     """A node in the hierarchy. References one LDrawFile"""
 
-    def __init__(self, filename, isFullFilepath, colourName=Options.defaultColour, matrix=Math.identityMatrix, bfcCull=True, bfcInverted=False, isLSynthPart=False, isSubPart=False, isRootNode=True):
+    def __init__(self, filename, isFullFilepath, colourName=Options.defaultColour, matrix=Math.identityMatrix, bfcCull=True, bfcInverted=False, isLSynthPart=False, isSubPart=False, isRootNode=True, groupNames=[]):
         self.filename       = filename
         self.isFullFilepath = isFullFilepath
         self.matrix         = matrix
@@ -844,6 +845,7 @@ class LDrawNode:
         self.isLSynthPart   = isLSynthPart
         self.isSubPart      = isSubPart
         self.isRootNode     = isRootNode
+        self.groupNames     = groupNames.copy()
 
     def isBlenderObjectNode(self):
         """
@@ -1099,6 +1101,8 @@ class LDrawFile:
         bfcWindingCCW         = True
         bfcInvertNext         = False
         processingLSynthParts = False
+        
+        currentGroupNames = []
 
         #debugPrint("Processing file {0}, isSubPart = {1}, found {2} lines".format(self.filename, self.isSubPart, len(self.lines)))
 
@@ -1110,7 +1114,7 @@ class LDrawFile:
                 continue
                 
             # Pad with empty values to ease parsing
-            while len(parameters) < 4:
+            while len(parameters) < 5:
                 parameters.append(None)
 
             # Parse LDraw comments (some of which have special significance)
@@ -1152,6 +1156,12 @@ class LDrawFile:
                 if parameters[1] == "!LDCAD":
                     if parameters[2] == "GENERATED":
                         processingLSynthParts = True
+                if parameters[1] == "!LEOCAD":
+                    if parameters[2] == "GROUP":
+                        if parameters[3] == "BEGIN":
+                            currentGroupNames.append(" ".join(parameters[4:]))
+                        elif parameters[3] == "END":
+                            currentGroupNames.pop(-1)
 
             else:
                 if self.bfcCertified is None:
@@ -1173,7 +1183,7 @@ class LDrawFile:
                         bfcInvertNext = not bfcInvertNext
                     canCullChildNode = (self.bfcCertified or self.isModel) and bfcLocalCull and (det != 0)
 
-                    newNode = LDrawNode(new_filename, False, new_colourName, localMatrix, canCullChildNode, bfcInvertNext, processingLSynthParts, not self.isModel, False)
+                    newNode = LDrawNode(new_filename, False, new_colourName, localMatrix, canCullChildNode, bfcInvertNext, processingLSynthParts, not self.isModel, False, currentGroupNames)
                     self.childNodes.append(newNode)
 
                 # Parse an edge
@@ -2090,6 +2100,30 @@ def meshIsReusable(meshName, geometry):
     return False
 
 # **************************************************************************************
+def addNodeToParentWithGroups(parentObject, groupNames, newObject):
+
+    if not Options.flattenGroups:
+        # Create groups as needed
+        for groupName in groupNames:
+            # The max length of a Blender node name appears to be 63 bytes when encoded as UTF-8. We make sure it fits.
+            while len(groupName.encode("utf8")) > 63:
+                groupName = groupName[:-1]
+            
+            # Check if we already have this node name, or if we need to create a new node
+            groupObj = None
+            for obj in bpy.data.objects:
+                if (obj.name == groupName):
+                    groupObj = obj
+            if (groupObj is None):
+                groupObj = bpy.data.objects.new(groupName, None)
+                groupObj.parent = parentObject
+                globalObjectsToAdd.append(groupObj)
+            parentObject = groupObj
+
+    newObject.parent = parentObject
+    globalObjectsToAdd.append(newObject)
+
+# **************************************************************************************
 def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options.defaultColour, blenderParentTransform=Math.identityMatrix, localToWorldSpaceMatrix=Math.identityMatrix, blenderNodeParent=None):
     """
     Creates a Blender Object for the node given and (recursively) for all it's children as required.
@@ -2160,14 +2194,14 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
         # Create Blender Object
         ob = bpy.data.objects.new(blenderName, mesh)
         ob.matrix_local = blenderParentTransform * localMatrix
-        ob.parent = blenderNodeParent
+
+        # Add any (LeoCAD) group nodes as parents of 'ob' (the new node), as children of 'blenderNodeParent'. 
+        # Also add all objects to 'globalObjectsToAdd'.
+        addNodeToParentWithGroups(blenderNodeParent, node.groupNames, ob)
 
         # Node to which our children will be attached
         blenderNodeParent = ob
         blenderParentTransform = Math.identityMatrix
-
-        # Don't add the object to the scene yet, just add it to a list
-        globalObjectsToAdd.append(ob)
 
         if newMeshCreated:
             # For performance reasons we try to avoid using bpy.ops.* methods 

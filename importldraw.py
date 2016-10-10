@@ -179,7 +179,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
     linkParts = BoolProperty(
         name="Link identical parts",
         description="Identical parts (same type and colour) share the same mesh",
-        default=prefs.get("createInstances", True)
+        default=prefs.get("linkParts", True)
     )
 
     numberNodes = BoolProperty(
