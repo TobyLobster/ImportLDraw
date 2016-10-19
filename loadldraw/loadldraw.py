@@ -50,6 +50,7 @@ class Options:
 
     # Full filepath to ldraw folder. If empty, some standard locations are attempted
     ldrawDirectory     = r""            # Full filepath to the ldraw parts library (searches some standard locations if left blank)
+    instructionsLook   = True           # Set up scene to look like Lego Instruction booklets
     scale              = 0.01           # Size of the lego model to create. (0.04 is LeoCAD scale)
     useUnofficialParts = True           # Additionally searches <ldraw-dir>/unofficial/parts and /p for files
     resolution         = "Standard"     # Choose from "High", "Standard", or "Low"
@@ -92,6 +93,7 @@ class Options:
 
         return "_".join([str(Options.scale),
                          str(Options.useUnofficialParts),
+                         str(Options.instructionsLook),
                          str(Options.resolution), 
                          str(Options.defaultColour),
                          str(Options.createInstances), 
@@ -1214,13 +1216,18 @@ class BlenderMaterials:
 
     __material_list = {}
 
+    def __getGroupName(name):
+        if Options.instructionsLook:
+            return name + " Instructions"
+        return name
+
     def __setBlenderRenderProperties(material, nodes, links, col):
         """Get Blender Internal Material Values."""
         material.diffuse_color = col["colour"]
 
         alpha = col["alpha"]
         if alpha < 1.0:
-            material.use_transparency = True
+            material.use_transparency = not Options.instructionsLook
             material.alpha = alpha
 
         material.emit = col["luminance"] / 100
@@ -1264,10 +1271,19 @@ class BlenderMaterials:
         input.location = 0, -250
         input.material = material
         output = nodes.new('ShaderNodeOutput')
-        output.location = 190, -250
+        output.location = 400, -250
 
         links.new(input.outputs[0], output.inputs[0])
-        links.new(input.outputs[1], output.inputs[1])
+
+        if Options.instructionsLook and alpha < 1.0:
+            mult = nodes.new('ShaderNodeMath')
+            mult.operation = 'MULTIPLY'
+            mult.location = 200, -410
+            links.new(input.outputs[1], mult.inputs[0])
+            links.new(mult.outputs[0], output.inputs[1])
+        else:
+            links.new(input.outputs[1], output.inputs[1])
+
 
     def __createNodeBasedMaterial(blenderName, col):
         """Get Cycles Material Values."""
@@ -1280,6 +1296,24 @@ class BlenderMaterials:
 
         # Use nodes
         material.use_nodes = True
+
+        if Options.instructionsLook:
+            material.use_shadeless = True
+            material.diffuse_intensity = 1.0
+            material.translucency = 0
+            if col is not None:
+                colour = col["colour"] + (1.0,)
+                R = colour[0]
+                G = colour[1]
+                B = colour[2]
+                
+                # Measure the perceived brightness of colour
+                brightness = math.sqrt( 0.299*R*R + 0.587*G*G + 0.114*B*B )
+
+                # Dark colours have white lines
+                if brightness < 0.02:
+                    material.line_color = (1.0, 1.0, 1.0, 1.0)
+
         nodes = material.node_tree.nodes
         links = material.node_tree.links
 
@@ -1291,8 +1325,11 @@ class BlenderMaterials:
             BlenderMaterials.__setBlenderRenderProperties(material, nodes, links, col)
 
             colour = col["colour"] + (1.0,)
+            isTransparent = col["alpha"] < 1.0
 
-            if col["name"] == "Milky_White":
+            if Options.instructionsLook:
+                BlenderMaterials.__createCyclesBasic(nodes, links, colour, col["alpha"])
+            elif col["name"] == "Milky_White":
                 BlenderMaterials.__createCyclesMilkyWhite(nodes, links, colour)
             elif col["luminance"] > 0:
                 BlenderMaterials.__createCyclesEmission(nodes, links, colour, col["alpha"], col["luminance"])
@@ -1310,42 +1347,45 @@ class BlenderMaterials:
                 BlenderMaterials.__createCyclesRubber(nodes, links, colour, col["alpha"])
             else:
                 BlenderMaterials.__createCyclesBasic(nodes, links, colour, col["alpha"])
+
+            material["Lego.isTransparent"] = isTransparent
             return material
 
         BlenderMaterials.__createCyclesBasic(nodes, links, (1.0, 1.0, 0.0, 1.0), 1.0)
+        material["Lego.isTransparent"] = False
         return material
 
     def __nodeLegoStandard(nodes, colour, x, y):
         node = nodes.new('ShaderNodeGroup')
-        node.node_tree = bpy.data.node_groups['Lego Standard']
+        node.node_tree = bpy.data.node_groups[BlenderMaterials.__getGroupName('Lego Standard')]
         node.location = x, y
         node.inputs['Color'].default_value = colour
         return node
 
     def __nodeLegoTransparent(nodes, colour, x, y):
         node = nodes.new('ShaderNodeGroup')
-        node.node_tree = bpy.data.node_groups['Lego Transparent']
+        node.node_tree = bpy.data.node_groups[BlenderMaterials.__getGroupName('Lego Transparent')]
         node.location = x, y
         node.inputs['Color'].default_value = colour
         return node
 
     def __nodeLegoRubberSolid(nodes, colour, x, y):
         node = nodes.new('ShaderNodeGroup')
-        node.node_tree = bpy.data.node_groups['Lego Rubber Solid']
+        node.node_tree = bpy.data.node_groups[BlenderMaterials.__getGroupName('Lego Rubber Solid')]
         node.location = x, y
         node.inputs['Color'].default_value = colour
         return node
 
     def __nodeLegoRubberTranslucent(nodes, colour, x, y):
         node = nodes.new('ShaderNodeGroup')
-        node.node_tree = bpy.data.node_groups['Lego Rubber Translucent']
+        node.node_tree = bpy.data.node_groups[BlenderMaterials.__getGroupName('Lego Rubber Translucent')]
         node.location = x, y
         node.inputs['Color'].default_value = colour
         return node
 
     def __nodeLegoEmission(nodes, colour, luminance, x, y):
         node = nodes.new('ShaderNodeGroup')
-        node.node_tree = bpy.data.node_groups['Lego Emission']
+        node.node_tree = bpy.data.node_groups[BlenderMaterials.__getGroupName('Lego Emission')]
         node.location = x, y
         node.inputs['Color'].default_value = colour
         node.inputs['Luminance'].default_value = luminance
@@ -1353,28 +1393,28 @@ class BlenderMaterials:
 
     def __nodeLegoChrome(nodes, colour, x, y):
         node = nodes.new('ShaderNodeGroup')
-        node.node_tree = bpy.data.node_groups['Lego Chrome']
+        node.node_tree = bpy.data.node_groups[BlenderMaterials.__getGroupName('Lego Chrome')]
         node.location = x, y
         node.inputs['Color'].default_value = colour
         return node
 
     def __nodeLegoPearlescent(nodes, colour, x, y):
         node = nodes.new('ShaderNodeGroup')
-        node.node_tree = bpy.data.node_groups['Lego Pearlescent']
+        node.node_tree = bpy.data.node_groups[BlenderMaterials.__getGroupName('Lego Pearlescent')]
         node.location = x, y
         node.inputs['Color'].default_value = colour
         return node
 
     def __nodeLegoMetal(nodes, colour, x, y):
         node = nodes.new('ShaderNodeGroup')
-        node.node_tree = bpy.data.node_groups['Lego Metal']
+        node.node_tree = bpy.data.node_groups[BlenderMaterials.__getGroupName('Lego Metal')]
         node.location = x, y
         node.inputs['Color'].default_value = colour
         return node
 
     def __nodeLegoGlitter(nodes, colour, glitterColour, x, y):
         node = nodes.new('ShaderNodeGroup')
-        node.node_tree = bpy.data.node_groups['Lego Glitter']
+        node.node_tree = bpy.data.node_groups[BlenderMaterials.__getGroupName('Lego Glitter')]
         node.location = x, y
         node.inputs['Color'].default_value = colour
         node.inputs['Glitter Color'].default_value = glitterColour
@@ -1382,7 +1422,7 @@ class BlenderMaterials:
 
     def __nodeLegoSpeckle(nodes, colour, speckleColour, x, y):
         node = nodes.new('ShaderNodeGroup')
-        node.node_tree = bpy.data.node_groups['Lego Speckle']
+        node.node_tree = bpy.data.node_groups[BlenderMaterials.__getGroupName('Lego Speckle')]
         node.location = x, y
         node.inputs['Color'].default_value = colour
         node.inputs['Speckle Color'].default_value = speckleColour
@@ -1390,7 +1430,7 @@ class BlenderMaterials:
 
     def __nodeLegoMilkyWhite(nodes, colour, x, y):
         node = nodes.new('ShaderNodeGroup')
-        node.node_tree = bpy.data.node_groups['Lego Milky White']
+        node.node_tree = bpy.data.node_groups[BlenderMaterials.__getGroupName('Lego Milky White')]
         node.location = x, y
         node.inputs['Color'].default_value = colour
         return node
@@ -1448,6 +1488,22 @@ class BlenderMaterials:
 
     def __nodeTranslucent(nodes, x, y):
         node = nodes.new('ShaderNodeBsdfTranslucent')
+        node.location = x, y
+        return node
+
+    def __nodeTransparent(nodes, x, y):
+        node = nodes.new('ShaderNodeBsdfTransparent')
+        node.location = x, y
+        return node
+
+    def __nodeLightPath(nodes, x, y):
+        node = nodes.new('ShaderNodeLightPath')
+        node.location = x, y
+        return node
+
+    def __nodeMath(nodes, operation, x, y):
+        node = nodes.new('ShaderNodeMath')
+        node.operation = operation
         node.location = x, y
         return node
 
@@ -1579,8 +1635,13 @@ class BlenderMaterials:
             result = BlenderMaterials.__material_list[colourName]
             return result
 
-        # If it already exists in Blender, use that
-        blenderName = "Material_{0}".format(colourName)
+        # Create a name for the material based on the colour
+        if Options.instructionsLook:
+            blenderName = "MatInst_{0}".format(colourName)
+        else:
+            blenderName = "Material_{0}".format(colourName)    
+
+        # If the name already exists in Blender, use that
         if Options.overwriteExistingMaterials is False:
             if blenderName in bpy.data.materials:
                 return bpy.data.materials[blenderName]
@@ -1753,42 +1814,69 @@ class BlenderMaterials:
 
     # **************************************************************************************
     def __createBlenderLegoStandardNodeGroup():
-        if bpy.data.node_groups.get('Lego Standard') is None:
+        groupName = BlenderMaterials.__getGroupName('Lego Standard')
+        if bpy.data.node_groups.get(groupName) is None:
             debugPrint("createBlenderLegoStandardNodeGroup #create")
             # create a group
-            group, node_input, node_output = BlenderMaterials.__createGroup('Lego Standard', -250, 0, 250, 0, True)
+            group, node_input, node_output = BlenderMaterials.__createGroup(groupName, -250, 0, 250, 0, True)
             group.inputs.new('NodeSocketColor','Color')
             group.inputs.new('NodeSocketVectorDirection','Normal')
 
-            node_dielectric = BlenderMaterials.nodeDielectric(group.nodes, 0.2, 0.1, 0.0, 1.46, 0, 0)
+            if Options.instructionsLook:
+                node_emission = BlenderMaterials.__nodeEmission(group.nodes, 0, 0)
+                group.links.new(node_input.outputs['Color'],       node_emission.inputs['Color'])
+                group.links.new(node_emission.outputs['Emission'], node_output.inputs['Shader'])
+            else:
+                node_dielectric = BlenderMaterials.nodeDielectric(group.nodes, 0.2, 0.1, 0.0, 1.46, 0, 0)
 
-            # link nodes together
-            group.links.new(node_input.outputs['Color'],       node_dielectric.inputs['Color'])
-            group.links.new(node_input.outputs['Normal'],      node_dielectric.inputs['Normal'])
-            group.links.new(node_dielectric.outputs['Shader'], node_output.inputs['Shader'])
+                # link nodes together
+                group.links.new(node_input.outputs['Color'],       node_dielectric.inputs['Color'])
+                group.links.new(node_input.outputs['Normal'],      node_dielectric.inputs['Normal'])
+                group.links.new(node_dielectric.outputs['Shader'], node_output.inputs['Shader'])
 
     # **************************************************************************************
     def __createBlenderLegoTransparentNodeGroup():
-        if bpy.data.node_groups.get('Lego Transparent') is None:
+        groupName = BlenderMaterials.__getGroupName('Lego Transparent')
+        if bpy.data.node_groups.get(groupName) is None:
             debugPrint("createBlenderLegoTransparentNodeGroup #create")
             # create a group
-            group, node_input, node_output = BlenderMaterials.__createGroup('Lego Transparent', -250, 0, 250, 0, True)
+            group, node_input, node_output = BlenderMaterials.__createGroup(groupName, -250, 0, 250, 0, True)
             group.inputs.new('NodeSocketColor','Color')
             group.inputs.new('NodeSocketVectorDirection','Normal')
 
-            node_dielectric = BlenderMaterials.nodeDielectric(group.nodes, 0.15, 0.1, 0.97, 1.46, 0, 0)
+            if Options.instructionsLook:
+                node_emission    = BlenderMaterials.__nodeEmission(group.nodes, 0, 0)
+                node_transparent = BlenderMaterials.__nodeTransparent(group.nodes, 0, 100)
+                node_mix1        = BlenderMaterials.__nodeMix(group.nodes, 0.5, 400, 100)
+                node_light       = BlenderMaterials.__nodeLightPath(group.nodes, 200, 400)
+                node_less        = BlenderMaterials.__nodeMath(group.nodes, 'LESS_THAN', 400, 400)
+                node_mix2        = BlenderMaterials.__nodeMix(group.nodes, 0.5, 600, 300)
+                
+                node_output.location = (800,0)
+                
+                group.links.new(node_input.outputs['Color'],                node_emission.inputs['Color'])
+                group.links.new(node_transparent.outputs[0],                node_mix1.inputs[1])
+                group.links.new(node_emission.outputs['Emission'],          node_mix1.inputs[2])
+                group.links.new(node_transparent.outputs[0],                node_mix2.inputs[1])
+                group.links.new(node_mix1.outputs[0],                       node_mix2.inputs[2])
+                group.links.new(node_light.outputs['Transparent Depth'],    node_less.inputs[0])
+                group.links.new(node_less.outputs[0],                       node_mix2.inputs['Fac'])
+                group.links.new(node_mix2.outputs[0],                       node_output.inputs['Shader'])
+            else:
+                node_dielectric = BlenderMaterials.nodeDielectric(group.nodes, 0.15, 0.1, 0.97, 1.46, 0, 0)
 
-            # link nodes together
-            group.links.new(node_input.outputs['Color'],       node_dielectric.inputs['Color'])
-            group.links.new(node_input.outputs['Normal'],      node_dielectric.inputs['Normal'])
-            group.links.new(node_dielectric.outputs['Shader'], node_output.inputs['Shader'])
+                # link nodes together
+                group.links.new(node_input.outputs['Color'],       node_dielectric.inputs['Color'])
+                group.links.new(node_input.outputs['Normal'],      node_dielectric.inputs['Normal'])
+                group.links.new(node_dielectric.outputs['Shader'], node_output.inputs['Shader'])
 
     # **************************************************************************************
     def __createBlenderLegoRubberNodeGroup():
-        if bpy.data.node_groups.get('Lego Rubber Solid') is None:
+        groupName = BlenderMaterials.__getGroupName('Lego Rubber Solid')
+        if bpy.data.node_groups.get(groupName) is None:
             debugPrint("createBlenderLegoTransparentNodeGroup #create")
             # create a group
-            group, node_input, node_output = BlenderMaterials.__createGroup('Lego Rubber Solid', -250, 0, 250, 0, True)
+            group, node_input, node_output = BlenderMaterials.__createGroup(groupName, -250, 0, 250, 0, True)
             group.inputs.new('NodeSocketColor','Color')
             group.inputs.new('NodeSocketVectorDirection','Normal')
 
@@ -1802,10 +1890,11 @@ class BlenderMaterials:
 
     # **************************************************************************************
     def __createBlenderLegoRubberTranslucentNodeGroup():
-        if bpy.data.node_groups.get('Lego Rubber Translucent') is None:
+        groupName = BlenderMaterials.__getGroupName('Lego Rubber Translucent')
+        if bpy.data.node_groups.get(groupName) is None:
             debugPrint("createBlenderLegoRubberTranslucentNodeGroup #create")
             # create a group
-            group, node_input, node_output = BlenderMaterials.__createGroup('Lego Rubber Translucent', -250, 0, 250, 0, True)
+            group, node_input, node_output = BlenderMaterials.__createGroup(groupName, -250, 0, 250, 0, True)
             group.inputs.new('NodeSocketColor','Color')
             group.inputs.new('NodeSocketVectorDirection','Normal')
 
@@ -1818,11 +1907,12 @@ class BlenderMaterials:
 
     # **************************************************************************************
     def __createBlenderLegoEmissionNodeGroup():
-        if bpy.data.node_groups.get('Lego Emission') is None:
+        groupName = BlenderMaterials.__getGroupName('Lego Rubber Translucent')
+        if bpy.data.node_groups.get(groupName) is None:
             debugPrint("createBlenderLegoEmissionNodeGroup #create")
 
             # create a group
-            group, node_input, node_output = BlenderMaterials.__createGroup('Lego Emission', -450, 90, 250, 0, True)
+            group, node_input, node_output = BlenderMaterials.__createGroup(groupName, -450, 90, 250, 0, True)
             group.inputs.new('NodeSocketColor','Color')
             group.inputs.new('NodeSocketFloatFactor','Luminance')
             group.inputs.new('NodeSocketVectorDirection','Normal')
@@ -1841,11 +1931,12 @@ class BlenderMaterials:
 
     # **************************************************************************************
     def __createBlenderLegoChromeNodeGroup():
-        if bpy.data.node_groups.get('Lego Chrome') is None:
+        groupName = BlenderMaterials.__getGroupName('Lego Chrome')
+        if bpy.data.node_groups.get(groupName) is None:
             debugPrint("createBlenderLegoChromeNodeGroup #create")
 
             # create a group
-            group, node_input, node_output = BlenderMaterials.__createGroup('Lego Chrome', -450, 90, 250, 0, True)
+            group, node_input, node_output = BlenderMaterials.__createGroup(groupName, -450, 90, 250, 0, True)
             group.inputs.new('NodeSocketColor','Color')
             group.inputs.new('NodeSocketVectorDirection','Normal')
 
@@ -1863,11 +1954,12 @@ class BlenderMaterials:
 
     # **************************************************************************************
     def __createBlenderLegoPearlescentNodeGroup():
-        if bpy.data.node_groups.get('Lego Pearlescent') is None:
+        groupName = BlenderMaterials.__getGroupName('Lego Pearlescent')
+        if bpy.data.node_groups.get(groupName) is None:
             debugPrint("createBlenderLegoPearlescentNodeGroup #create")
 
             # create a group
-            group, node_input, node_output = BlenderMaterials.__createGroup('Lego Pearlescent', -450, 90, 250, 0, True)
+            group, node_input, node_output = BlenderMaterials.__createGroup(groupName, -450, 90, 250, 0, True)
             group.inputs.new('NodeSocketColor','Color')
             group.inputs.new('NodeSocketVectorDirection','Normal')
 
@@ -1886,11 +1978,12 @@ class BlenderMaterials:
 
     # **************************************************************************************
     def __createBlenderLegoMetalNodeGroup():
-        if bpy.data.node_groups.get('Lego Metal') is None:
+        groupName = BlenderMaterials.__getGroupName('Lego Metal')
+        if bpy.data.node_groups.get(groupName) is None:
             debugPrint("createBlenderLegoMetalNodeGroup #create")
 
             # create a group
-            group, node_input, node_output = BlenderMaterials.__createGroup('Lego Metal', -450, 90, 250, 0, True)
+            group, node_input, node_output = BlenderMaterials.__createGroup(groupName, -450, 90, 250, 0, True)
             group.inputs.new('NodeSocketColor','Color')
             group.inputs.new('NodeSocketVectorDirection','Normal')
 
@@ -1909,11 +2002,12 @@ class BlenderMaterials:
 
     # **************************************************************************************
     def __createBlenderLegoGlitterNodeGroup():
-        if bpy.data.node_groups.get('Lego Glitter') is None:
+        groupName = BlenderMaterials.__getGroupName('Lego Glitter')
+        if bpy.data.node_groups.get(groupName) is None:
             debugPrint("createBlenderLegoGlitterNodeGroup #create")
 
             # create a group
-            group, node_input, node_output = BlenderMaterials.__createGroup('Lego Glitter', -450, 0, 410, 0, True)
+            group, node_input, node_output = BlenderMaterials.__createGroup(groupName, -450, 0, 410, 0, True)
             group.inputs.new('NodeSocketColor','Color')
             group.inputs.new('NodeSocketColor','Glitter Color')
             group.inputs.new('NodeSocketVectorDirection','Normal')
@@ -1942,11 +2036,12 @@ class BlenderMaterials:
 
     # **************************************************************************************
     def __createBlenderLegoSpeckleNodeGroup():
-        if bpy.data.node_groups.get('Lego Speckle') is None:
+        groupName = BlenderMaterials.__getGroupName('Lego Speckle')
+        if bpy.data.node_groups.get(groupName) is None:
             debugPrint("createBlenderLegoSpeckleNodeGroup #create")
 
             # create a group
-            group, node_input, node_output = BlenderMaterials.__createGroup('Lego Speckle', -450, 0, 410, 0, True)
+            group, node_input, node_output = BlenderMaterials.__createGroup(groupName, -450, 0, 410, 0, True)
             group.inputs.new('NodeSocketColor','Color')
             group.inputs.new('NodeSocketColor','Speckle Color')
             group.inputs.new('NodeSocketVectorDirection','Normal')
@@ -1975,11 +2070,12 @@ class BlenderMaterials:
 
     # **************************************************************************************
     def __createBlenderLegoMilkyWhiteNodeGroup():
-        if bpy.data.node_groups.get('Lego Milky White') is None:
+        groupName = BlenderMaterials.__getGroupName('Lego Milky White')
+        if bpy.data.node_groups.get(groupName) is None:
             debugPrint("createBlenderLegoMilkyWhiteNodeGroup #create")
 
             # create a group
-            group, node_input, node_output = BlenderMaterials.__createGroup('Lego Milky White', -450, 0, 350, 0, True)
+            group, node_input, node_output = BlenderMaterials.__createGroup(groupName, -450, 0, 350, 0, True)
             group.inputs.new('NodeSocketColor','Color')
             group.inputs.new('NodeSocketVectorDirection','Normal')
 
@@ -2195,7 +2291,18 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
         ob = bpy.data.objects.new(blenderName, mesh)
         ob.matrix_local = blenderParentTransform * localMatrix
 
-        # Add any (LeoCAD) group nodes as parents of 'ob' (the new node), as children of 'blenderNodeParent'. 
+        # Mark object as transparent if any polygon is transparent
+        ob["Lego.isTransparent"] = False
+        if mesh is not None:
+            for i, f in enumerate(mesh.polygons):
+                material = BlenderMaterials.getMaterial(geometry.faceColours[i])
+                if material is not None:
+                    if "Lego.isTransparent" in material:
+                        if material["Lego.isTransparent"]:
+                            ob["Lego.isTransparent"] = True
+                            break
+
+        # Add any (LeoCAD) group nodes as parents of 'ob' (the new node), and as children of 'blenderNodeParent'. 
         # Also add all objects to 'globalObjectsToAdd'.
         addNodeToParentWithGroups(blenderNodeParent, node.groupNames, ob)
 
@@ -2279,32 +2386,37 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
                 ))
                 mesh.transform(gapsScaleMatrix)
 
+            # We would like to avoid using bpy.ops functions altogether since it 
+            # slows down progressively as more objects are added to the scene, but 
+            # we have no choice but to use it here (a) for smoothing and (b) for 
+            # marking freestyle edges (no bmesh options exist currently). To minimise 
+            # the performance drop, we add one object only to the scene, smooth it, 
+            # then remove it again. Only at the end of the import process are all the 
+            # objects properly added to the scene.
+
+            # Temporarily add object to scene
+            bpy.context.scene.objects.link(ob)
+
+            # Select object
+            ob.select = True
+            bpy.context.scene.objects.active = ob
+
             # Smooth shading
             if Options.smoothShading:
-                # We would like to avoid using bpy.ops functions altogether since it 
-                # slows down progressively as more objects are added to the scene, but 
-                # we have no choice but to use it here for smoothing (no bmesh option 
-                # exists currently). To minimise the performance drop, we add one object
-                # only to the scene, smooth it, then remove it again.
-                # Only at the end of the import process are all the objects properly 
-                # added to the scene.
-
-                # Temporarily add object to scene
-                bpy.context.scene.objects.link(ob)
-
-                # Select object
-                ob.select = True
-                bpy.context.scene.objects.active = ob
-
                 # Smooth the mesh
                 bpy.ops.object.shade_smooth()
 
-                # Deselect object
-                ob.select = False
-                bpy.context.scene.objects.active = None
+            # Mark all sharp edges as freestyle edges
+            me = bpy.context.object.data
+            for e in me.edges:
+                e.use_freestyle_mark = e.use_edge_sharp
 
-                # Remove object from scene
-                bpy.context.scene.objects.unlink(ob)
+            # Deselect object
+            ob.select = False
+            bpy.context.scene.objects.active = None
+
+            # Remove object from scene
+            bpy.context.scene.objects.unlink(ob)
 
         # Add Bevel modifier to each instance
         if Options.addBevelModifier:
@@ -2361,6 +2473,161 @@ def addFileToCache(relativePath, name):
     file = LDrawFile(relativePath, False, None, True)
     CachedFiles.addToCache(name, file)
     return True
+
+# **************************************************************************************
+def setupLineset(lineset):
+    lineset.select_silhouette = True
+    lineset.select_border = False
+    lineset.select_contour = False
+    lineset.select_suggestive_contour = False
+    lineset.select_ridge_valley = False
+    lineset.select_crease = False
+    lineset.select_edge_mark = True
+    lineset.select_external_contour = False
+    lineset.select_material_boundary = False
+    lineset.edge_type_combination = 'OR'
+    lineset.edge_type_negation = 'INCLUSIVE'
+
+    # Set line color
+    lineset.linestyle.color = (0.0, 0.0, 0.0)
+    
+    # Set material to override color
+    if 'LegoMaterial' not in lineset.linestyle.color_modifiers:
+        lineset.linestyle.color_modifiers.new('LegoMaterial', 'MATERIAL')
+
+    # Use rounded caps
+    lineset.linestyle.caps = 'ROUND'
+
+# **************************************************************************************
+def setupInstructionsLook():
+    scene = bpy.context.scene
+    render = scene.render
+    render.use_freestyle = True
+
+    # Change camera to Orthographic
+    scene.camera.data.type = 'ORTHO'
+
+    # For Blender Render, set transparent background
+    render.alpha_mode = 'TRANSPARENT'
+
+    # Turn on cycles transparency
+    scene.cycles.film_transparent = True
+
+    # Increase max number of transparency bounces to at least 80
+    # This avoids artefacts when multiple transparent objects are behind each other
+    if scene.cycles.transparent_max_bounces < 80:
+        scene.cycles.transparent_max_bounces = 80
+
+    # Look for/create the render layers we are interested in:
+    layerNames = list(map((lambda x: x.name), render.layers))
+    if "SolidBricks" not in layerNames:
+        bpy.ops.scene.render_layer_add()
+        render.layers[-1].name = "SolidBricks"
+        render.layers[-1].use = True
+        layerNames.append("SolidBricks")
+    solidLayer = layerNames.index("SolidBricks")
+
+    if "TransparentBricks" not in layerNames:
+        bpy.ops.scene.render_layer_add()
+        render.layers[-1].name = "TransparentBricks"
+        render.layers[-1].use = True
+        layerNames.append("TransparentBricks")
+    transLayer = layerNames.index("TransparentBricks")
+
+    # Disable any render layers that are not needed
+    for i in range(len(render.layers)):
+        if i not in [solidLayer, transLayer]:
+            render.layers[i].use = False
+
+    # Enable two scene layers
+    scene.layers[0] = True
+    scene.layers[1] = True
+
+    # Enable just the right scene layers in each of our two render layers
+    length = len(render.layers[solidLayer].layers)
+    for i in range(length):
+        render.layers[solidLayer].layers[i] = (i == 0)
+        render.layers[transLayer].layers[i] = (i == 1)
+
+    # Move each part to appropriate scene layer
+    for object in scene.objects:
+        isTransparent = False
+        if "Lego.isTransparent" in object:
+            isTransparent = object["Lego.isTransparent"]
+
+        # Turn on the appropriate layers
+        if isTransparent:
+            object.layers[1] = True
+        else:
+            object.layers[0] = True
+
+        # Turn off all other layers as appropriate
+        for i in range(length):
+            if isTransparent:
+                object.layers[i] = (i == 1)
+            else:
+                object.layers[i] = (i == 0)
+
+    # Find or create linesets
+    solidLineset = None
+    transLineset = None
+
+    for lineset in render.layers[solidLayer].freestyle_settings.linesets:
+        if lineset.name == "LegoSolidLines":
+            solidLineset = lineset
+
+    for lineset in render.layers[transLayer].freestyle_settings.linesets:
+        if lineset.name == "LegoTransLines":
+            transLineset = lineset
+
+    if solidLineset == None:
+        render.layers[solidLayer].freestyle_settings.linesets.new("LegoSolidLines")
+        solidLineset = render.layers[solidLayer].freestyle_settings.linesets[-1]
+    if transLineset == None:
+        render.layers[transLayer].freestyle_settings.linesets.new("LegoTransLines")
+        transLineset = render.layers[transLayer].freestyle_settings.linesets[-1]
+
+    setupLineset(solidLineset)
+    setupLineset(transLineset)
+
+    # Create Compositing Nodes
+    scene.use_nodes = True
+    #bpy.context.scene.node_tree.nodes
+    if "Solid" in scene.node_tree.nodes:
+        solidLayer = scene.node_tree.nodes["Solid"]
+    else:
+        solidLayer = scene.node_tree.nodes.new('CompositorNodeRLayers')
+        solidLayer.name = "Solid"
+        solidLayer.layer = 'SolidBricks'
+
+    if "Trans" in scene.node_tree.nodes:
+        transLayer = scene.node_tree.nodes["Trans"]
+    else:
+        transLayer = scene.node_tree.nodes.new('CompositorNodeRLayers')
+        transLayer.name = "Trans"
+        transLayer.layer = 'TransparentBricks'
+
+    if "Z Combine" in scene.node_tree.nodes:
+        zCombine = scene.node_tree.nodes["Z Combine"]
+    else:
+        zCombine = scene.node_tree.nodes.new('CompositorNodeZcombine')
+    zCombine.use_alpha = True
+    zCombine.use_antialias_z = True
+
+    composite = scene.node_tree.nodes["Composite"]
+    composite.location = (750, 400)
+    zCombine.location = (500, 500)
+    transLayer.location = (250, 300)
+    solidLayer.location = (250, 600)
+
+    links = scene.node_tree.links
+    links.new(solidLayer.outputs[0], zCombine.inputs[0])
+    links.new(solidLayer.outputs[2], zCombine.inputs[1])
+    links.new(transLayer.outputs[0], zCombine.inputs[2])
+    links.new(transLayer.outputs[2], zCombine.inputs[3])
+    links.new(zCombine.outputs[0], composite.inputs[0])
+    links.new(zCombine.outputs[1], composite.inputs[2])
+    
 
 # **************************************************************************************
 def loadFromFile(context, filename, isFullFilepath=True):
@@ -2457,6 +2724,9 @@ def loadFromFile(context, filename, isFullFilepath=True):
             # bpy.ops.object.transform_apply(location=True)
 
     globalObjectsToAdd = []
+
+    if Options.instructionsLook:
+        setupInstructionsLook()
 
     debugPrint("Load Done")
     return rootOb

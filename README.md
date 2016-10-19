@@ -15,8 +15,10 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 + **Mac** and **Windows** supported (and hopefully **Linux**, but this is currently untested).
 + **Bricksmith** compatible.
 + **MPD** file compatible.
++ **LeoCAD** groups supported.
 + **LSynth** bendable parts supported (synthesized models).
 + Both *Cycles* and *Blender Render* engines supported. It renders either engine from a single scene.
++ Import **photorealistic** look, or **Instructions** Look.
 + **Realistic materials** including standard brick material, transparent, rubber, and even the less common materials like chrome, metal, pearlescent, glow-in-the-dark, glitter and speckle.
 + **Accurate colour handling**. Correct colour space management is used so that e.g. black parts look black.
 + **Direct colours** supported.
@@ -52,6 +54,8 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 + In the bottom left of Blender's window, there's a panel of *Import Options*.
 + The first option is the LDraw Parts Library directory. Type the full filepath to the 'ldraw' directory you unzipped to.
 + To save that directory and try it out, choose a file to import.
+
+![Tugboat](./images/tugboat_960.png)
 
 ## History ##
 This plug-in is by Toby Nelson (toby@tnelson.demon.co.uk) and was initially written in May 2016. 

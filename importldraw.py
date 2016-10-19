@@ -47,6 +47,7 @@ ldrawDirectory     = ""
 scale              = 0.04
 resolution         = "Standard"
 smoothShading      = True
+useLook            = "normal"
 useColourScheme    = "lgeo"
 gaps               = True
 gapWidth           = 0.04
@@ -152,6 +153,16 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         description="Smooth faces and add an edge-split modifier",
         default=prefs.get("smoothShading", True)
     )
+    
+    look = EnumProperty(
+        name="Overall Look",
+        description="Realism or Schematic look",
+        default=prefs.get("useLook", "normal"),
+        items=(
+            ("normal", "Realistic Look", "Render to look realistic."),
+            ("instructions", "Lego Instructions Look", "Render to look like the instruction book pictures"),
+        )
+    )
 
     colourScheme = EnumProperty(
         name="Colour scheme options",
@@ -243,6 +254,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         box.label("LDraw filepath:", icon='FILESEL')
         box.prop(self, "ldrawPath")
         box.prop(self, "importScale")
+        box.prop(self, "look", expand=True)
         box.prop(self, "colourScheme", expand=True)
         box.prop(self, "resPrims", expand=True)
         box.prop(self, "smoothParts")
@@ -274,6 +286,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("resolution",            self.resPrims)
         ImportLDrawOps.prefs.set("smoothShading",         self.smoothParts)
         ImportLDrawOps.prefs.set("bevelEdges",            self.bevelEdges)
+        ImportLDrawOps.prefs.set("useLook",               self.look)
         ImportLDrawOps.prefs.set("useColourScheme",       self.colourScheme)
         ImportLDrawOps.prefs.set("gaps",                  self.addGaps)
         ImportLDrawOps.prefs.set("gapWidth",              self.gapsSize)
@@ -294,6 +307,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.Options.resolution         = self.resPrims
         loadldraw.Options.defaultColour      = "4"
         loadldraw.Options.createInstances    = self.linkParts
+        loadldraw.Options.instructionsLook   = self.look == "instructions"
         loadldraw.Options.useColourScheme    = self.colourScheme
         loadldraw.Options.numberNodes        = self.numberNodes
         loadldraw.Options.removeDoubles      = True
