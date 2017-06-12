@@ -63,6 +63,7 @@ class Options:
     edgeSplit          = True           # Edge split modifier (recommended if you use smoothShading)
     gaps               = True           # Introduces a tiny space between each brick
     gapWidth           = 0.01           # Width of gap between bricks (in Blender units)
+    curvedWalls        = True           # Manipulate normals to make surfaces look slightly concave
     positionObjectOnGroundAtOrigin = True   # Centre the object at the origin, sitting on the z=0 plane
     flattenHierarchy   = False          # All parts are under the root object - no sub-models
     flattenGroups      = False          # All LEOCad groups are ignored - no groups
@@ -102,6 +103,7 @@ class Options:
                          str(Options.smoothShading), 
                          str(Options.gaps),
                          str(Options.gapWidth),
+                         str(Options.curvedWalls),
                          str(Options.flattenHierarchy),
                          str(Options.useLogoStuds),
                          str(Options.logoStudVersion),
@@ -1348,12 +1350,22 @@ class BlenderMaterials:
             else:
                 BlenderMaterials.__createCyclesBasic(nodes, links, colour, col["alpha"])
 
+            if Options.curvedWalls and not Options.instructionsLook:
+                BlenderMaterials.__createCyclesConcaveWalls(nodes, links, 0.2)
+
             material["Lego.isTransparent"] = isTransparent
             return material
 
         BlenderMaterials.__createCyclesBasic(nodes, links, (1.0, 1.0, 0.0, 1.0), 1.0)
         material["Lego.isTransparent"] = False
         return material
+
+    def __nodeConcaveWalls(nodes, strength, x, y):
+        node = nodes.new('ShaderNodeGroup')
+        node.node_tree = bpy.data.node_groups[BlenderMaterials.__getGroupName('Concave Walls')]
+        node.location = x, y
+        node.inputs['Strength'].default_value = strength
+        return node
 
     def __nodeLegoStandard(nodes, colour, x, y):
         node = nodes.new('ShaderNodeGroup')
@@ -1525,6 +1537,21 @@ class BlenderMaterials:
         node.inputs['Gamma'].default_value = gamma
         return node
 
+    def __nodeColorRamp(nodes, pos1, colour1, pos2, colour2, x, y):
+        node = nodes.new('ShaderNodeValToRGB')
+        node.location = x, y
+        node.color_ramp.elements[0].position = pos1
+        node.color_ramp.elements[0].color = colour1
+        node.color_ramp.elements[1].position = pos2
+        node.color_ramp.elements[1].color = colour2
+        return node
+
+    def __createCyclesConcaveWalls(nodes, links, strength):
+        """Concave wall normals for Cycles render engine"""
+        node = BlenderMaterials.__nodeConcaveWalls(nodes, strength, -200, 5)
+        out = nodes['Group']
+        links.new(node.outputs['Normal'], out.inputs['Normal'])
+
     def __createCyclesBasic(nodes, links, diffColour, alpha):
         """Basic Material for Cycles render engine."""
 
@@ -1638,6 +1665,8 @@ class BlenderMaterials:
         # Create a name for the material based on the colour
         if Options.instructionsLook:
             blenderName = "MatInst_{0}".format(colourName)
+        elif Options.curvedWalls:
+            blenderName = "Material_{0}_c".format(colourName)
         else:
             blenderName = "Material_{0}".format(colourName)    
 
@@ -1674,6 +1703,181 @@ class BlenderMaterials:
         if createShaderOutput:
             group.outputs.new('NodeSocketShader','Shader')
         return (group, node_input, node_output)
+
+    # **************************************************************************************
+    def __createBlenderDistanceToCenterNodeGroup():
+        if bpy.data.node_groups.get('Distance-To-Center') is None:
+            debugPrint("createBlenderDistanceToCenterNodeGroup #create")
+            # create a group
+            group, node_input, node_output = BlenderMaterials.__createGroup('Distance-To-Center', -930, 0, 240, 0, False)
+            group.outputs.new('NodeSocketVectorDirection', 'Vector')
+
+            # create nodes
+            node_texture_coordinate = group.nodes.new('ShaderNodeTexCoord')
+            node_texture_coordinate.location = -730, 0
+
+            node_vector_subtraction1 = group.nodes.new('ShaderNodeVectorMath')
+            node_vector_subtraction1.operation = 'SUBTRACT'
+            node_vector_subtraction1.inputs[1].default_value[0] = 0.5
+            node_vector_subtraction1.inputs[1].default_value[1] = 0.5
+            node_vector_subtraction1.inputs[1].default_value[2] = 0.5
+            node_vector_subtraction1.location = -535, 0
+
+            node_normalize = group.nodes.new('ShaderNodeVectorMath')
+            node_normalize.operation = 'NORMALIZE'
+            node_normalize.location = -535, -245
+
+            node_dot_product = group.nodes.new('ShaderNodeVectorMath')
+            node_dot_product.operation = 'DOT_PRODUCT'
+            node_dot_product.location = -340, -125
+
+            node_multiply = group.nodes.new('ShaderNodeMixRGB')
+            node_multiply.blend_type = 'MULTIPLY'
+            node_multiply.inputs['Fac'].default_value = 1.0
+            node_multiply.location = -145, -125
+
+            node_vector_subtraction2 = group.nodes.new('ShaderNodeVectorMath')
+            node_vector_subtraction2.operation = 'SUBTRACT'
+            node_vector_subtraction2.location = 40, 0
+
+            # link nodes together
+            group.links.new(node_texture_coordinate.outputs['Generated'], node_vector_subtraction1.inputs[0])
+            group.links.new(node_texture_coordinate.outputs['Normal'], node_normalize.inputs[0])
+            group.links.new(node_vector_subtraction1.outputs['Vector'], node_dot_product.inputs[0])
+            group.links.new(node_normalize.outputs['Vector'], node_dot_product.inputs[1])
+            group.links.new(node_dot_product.outputs['Value'], node_multiply.inputs['Color1'])
+            group.links.new(node_normalize.outputs['Vector'], node_multiply.inputs['Color2'])
+            group.links.new(node_vector_subtraction1.outputs['Vector'], node_vector_subtraction2.inputs[0])
+            group.links.new(node_multiply.outputs['Color'], node_vector_subtraction2.inputs[1])
+            group.links.new(node_vector_subtraction2.outputs['Vector'], node_output.inputs['Vector'])
+
+    # **************************************************************************************
+    def __createBlenderVectorElementPowerNodeGroup():
+        if bpy.data.node_groups.get('Vector-Element-Power') is None:
+            debugPrint("createBlenderVectorElementPowerNodeGroup #create")
+            # create a group
+            group, node_input, node_output = BlenderMaterials.__createGroup('Vector-Element-Power', -580, 0, 400, 0, False)
+            group.inputs.new('NodeSocketFloat','Exponent')
+            group.inputs.new('NodeSocketVectorDirection','Vector')
+            group.outputs.new('NodeSocketVectorDirection','Vector')
+
+            # create nodes
+            node_separate_xyz = group.nodes.new('ShaderNodeSeparateXYZ')
+            node_separate_xyz.location = -385, -140
+
+            node_abs_x = group.nodes.new('ShaderNodeMath')
+            node_abs_x.operation = 'ABSOLUTE'
+            node_abs_x.location = -180, 180
+
+            node_abs_y = group.nodes.new('ShaderNodeMath')
+            node_abs_y.operation = 'ABSOLUTE'
+            node_abs_y.location = -180, 0
+
+            node_abs_z = group.nodes.new('ShaderNodeMath')
+            node_abs_z.operation = 'ABSOLUTE'
+            node_abs_z.location = -180, -180
+
+            node_power_x = group.nodes.new('ShaderNodeMath')
+            node_power_x.operation = 'POWER'
+            node_power_x.location = 20, 180
+
+            node_power_y = group.nodes.new('ShaderNodeMath')
+            node_power_y.operation = 'POWER'
+            node_power_y.location = 20, 0
+
+            node_power_z = group.nodes.new('ShaderNodeMath')
+            node_power_z.operation = 'POWER'
+            node_power_z.location = 20, -180
+
+            node_combine_xyz = group.nodes.new('ShaderNodeCombineXYZ')
+            node_combine_xyz.location = 215, 0
+
+            # link nodes together
+            group.links.new(node_input.outputs['Vector'], node_separate_xyz.inputs[0])
+            group.links.new(node_separate_xyz.outputs['X'], node_abs_x.inputs[0])
+            group.links.new(node_separate_xyz.outputs['Y'], node_abs_y.inputs[0])
+            group.links.new(node_separate_xyz.outputs['Z'], node_abs_z.inputs[0])
+            group.links.new(node_abs_x.outputs['Value'], node_power_x.inputs[0])
+            group.links.new(node_input.outputs['Exponent'], node_power_x.inputs[1])
+            group.links.new(node_abs_y.outputs['Value'], node_power_y.inputs[0])
+            group.links.new(node_input.outputs['Exponent'], node_power_y.inputs[1])
+            group.links.new(node_abs_z.outputs['Value'], node_power_z.inputs[0])
+            group.links.new(node_input.outputs['Exponent'], node_power_z.inputs[1])
+            group.links.new(node_power_x.outputs['Value'], node_combine_xyz.inputs['X'])
+            group.links.new(node_power_y.outputs['Value'], node_combine_xyz.inputs['Y'])
+            group.links.new(node_power_z.outputs['Value'], node_combine_xyz.inputs['Z'])
+            group.links.new(node_combine_xyz.outputs['Vector'], node_output.inputs[0])
+
+    # **************************************************************************************
+    def __createBlenderConvertToNormalsNodeGroup():
+        if bpy.data.node_groups.get('Convert-To-Normals') is None:
+            debugPrint("createBlenderConvertToNormalsNodeGroup #create")
+            # create a group
+            group, node_input, node_output = BlenderMaterials.__createGroup('Convert-To-Normals', -490, 0, 400, 0, False)
+            group.inputs.new('NodeSocketFloat','Vector Length')
+            group.inputs.new('NodeSocketFloat','Smoothing')
+            group.inputs.new('NodeSocketFloat','Strength')
+            group.inputs.new('NodeSocketVectorDirection','Normal')
+            group.outputs.new('NodeSocketVectorDirection','Normal')
+
+            # create nodes
+            node_power = group.nodes.new('ShaderNodeMath')
+            node_power.operation = 'POWER'
+            node_power.location = -290, 150
+
+            node_colorramp = group.nodes.new('ShaderNodeValToRGB')
+            node_colorramp.color_ramp.color_mode = 'RGB'
+            node_colorramp.color_ramp.interpolation = 'EASE'
+            node_colorramp.color_ramp.elements[0].color = (1, 1, 1, 1)
+            node_colorramp.color_ramp.elements[1].color = (0, 0, 0, 1)
+            node_colorramp.color_ramp.elements[1].position = 0.45
+            node_colorramp.location = -95, 150
+
+            node_bump = group.nodes.new('ShaderNodeBump')
+            node_bump.inputs['Distance'].default_value = 0.02
+            node_bump.location = 200, 0
+
+            # link nodes together
+            group.links.new(node_input.outputs['Vector Length'], node_power.inputs[0])
+            group.links.new(node_input.outputs['Smoothing'], node_power.inputs[1])
+            group.links.new(node_power.outputs['Value'], node_colorramp.inputs[0])
+            group.links.new(node_input.outputs['Strength'], node_bump.inputs['Strength'])
+            group.links.new(node_colorramp.outputs['Color'], node_bump.inputs['Height'])
+            group.links.new(node_input.outputs['Normal'], node_bump.inputs['Normal'])
+            group.links.new(node_bump.outputs['Normal'], node_output.inputs[0])
+
+    # **************************************************************************************
+    def __createBlenderConcaveWallsNodeGroup():
+        if bpy.data.node_groups.get('Concave Walls') is None:
+            debugPrint("createBlenderConcaveWallsNodeGroup #create")
+            # create a group
+            group, node_input, node_output = BlenderMaterials.__createGroup('Concave Walls', -530, 0, 300, 0, False)
+            group.inputs.new('NodeSocketFloat','Strength')
+            group.inputs.new('NodeSocketVectorDirection','Normal')
+            group.outputs.new('NodeSocketVectorDirection','Normal')
+
+            # create nodes
+            node_distance_to_center = group.nodes.new('ShaderNodeGroup')
+            node_distance_to_center.node_tree = bpy.data.node_groups['Distance-To-Center']
+            node_distance_to_center.location = (-340,105)
+
+            node_vector_elements_power = group.nodes.new('ShaderNodeGroup')
+            node_vector_elements_power.node_tree = bpy.data.node_groups['Vector-Element-Power']
+            node_vector_elements_power.location = (-120,105)
+            node_vector_elements_power.inputs['Exponent'].default_value = 4.0
+
+            node_convert_to_normals = group.nodes.new('ShaderNodeGroup')
+            node_convert_to_normals.node_tree = bpy.data.node_groups['Convert-To-Normals']
+            node_convert_to_normals.location = (90,0)
+            node_convert_to_normals.inputs['Strength'].default_value = 0.2
+            node_convert_to_normals.inputs['Smoothing'].default_value = 0.3
+
+            # link nodes together
+            group.links.new(node_distance_to_center.outputs['Vector'], node_vector_elements_power.inputs['Vector'])
+            group.links.new(node_vector_elements_power.outputs['Vector'], node_convert_to_normals.inputs['Vector Length'])
+            group.links.new(node_input.outputs['Strength'], node_convert_to_normals.inputs['Strength'])
+            group.links.new(node_input.outputs['Normal'], node_convert_to_normals.inputs['Normal'])
+            group.links.new(node_convert_to_normals.outputs['Normal'], node_output.inputs['Normal'])
 
     # **************************************************************************************
     def __createBlenderFresnelNodeGroup():
@@ -2100,7 +2304,11 @@ class BlenderMaterials:
 
     # **************************************************************************************
     def createBlenderNodeGroups():
-        # Based on ideas from https://www.youtube.com/watch?v=V3wghbZ-Vh4   
+        BlenderMaterials.__createBlenderDistanceToCenterNodeGroup()
+        BlenderMaterials.__createBlenderVectorElementPowerNodeGroup()
+        BlenderMaterials.__createBlenderConvertToNormalsNodeGroup()
+        BlenderMaterials.__createBlenderConcaveWallsNodeGroup()
+        # Based on ideas from https://www.youtube.com/watch?v=V3wghbZ-Vh4
         # "Create your own PBR Material [Fixed!]" by BlenderGuru
         BlenderMaterials.__createBlenderFresnelNodeGroup()
         BlenderMaterials.__createBlenderReflectionNodeGroup()
