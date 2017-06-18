@@ -28,6 +28,7 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 + Studs can include the **LEGO logo** on them, adding extra geometry.
 + **Gaps between bricks** - Optionally adds a small space between each brick, as in real life.
 + **Smart face smoothing** - Uses Edge-Split Modifier and Sharp Edges derived from Ldraw lines, for smooth curved surfaces and sharp corners.
++ **Concave walls** - Optionally look as if each brick has very slightly concave walls (with the photorealistic renderer), which affects the look of light reflections.
 + **Fast** - even large models can be imported in seconds.
 
 ![Ghostbusters](./images/ghostbusters_960.png)
@@ -58,7 +59,7 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 ![Tugboat](./images/tugboat_960.png)
 
 ## History ##
-This plug-in is by Toby Nelson (toby@tnelson.demon.co.uk) and was initially written in May 2016. 
+This plug-in is by Toby Nelson (tobymnelson@gmail.com) and was initially written in May 2016.
 
 It was inspired by and initially based on code from [LDR-Importer](https://github.com/le717/LDR-Importer) but has since been completely rewritten.
 
@@ -67,6 +68,9 @@ It was inspired by and initially based on code from [LDR-Importer](https://githu
 ## License ##
 
 *Import LDraw* is licensed under the [GPLv2](http://www.gnu.org/licenses/gpl-2.0.html) or any later version.
+
+## Thanks ##
+Thanks to [BertVanRaemdonck](https://github.com/BertVanRaemdonck) for the 'concave walls' feature, and for the useful feedback and suggestions.
 
 ## External References ##
 <a href="https://www.blender.org/"><img align="left" src="./images/logos/blender-plain.png" alt="Blender logo" style="margin: 0px 10px 0px 0px;"/></a>

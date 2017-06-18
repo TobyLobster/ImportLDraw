@@ -26,7 +26,7 @@ filepath of a file to load.
 
 Accepts .mpd, .ldr, .l3b, and .dat files.
 
-Toby Nelson - toby@tnelson.demon.co.uk
+Toby Nelson - tobymnelson@gmail.com
 """
 
 import os
