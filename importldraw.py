@@ -194,6 +194,12 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         default=prefs.get("curvedWalls", True)
     )
 
+    importCameras = BoolProperty(
+        name="Import cameras",
+        description="Import camera definitions (LeoCAD)",
+        default=prefs.get("importCameras", True)
+    )
+
     linkParts = BoolProperty(
         name="Link identical parts",
         description="Identical parts (same type and colour) share the same mesh",
@@ -269,6 +275,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         box.prop(self, "addGaps")
         box.prop(self, "gapsSize")
         box.prop(self, "curvedWalls")
+        box.prop(self, "importCameras")
         box.prop(self, "linkParts")
         box.prop(self, "useUnofficialParts")
 
@@ -299,6 +306,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("gaps",                  self.addGaps)
         ImportLDrawOps.prefs.set("gapWidth",              self.gapsSize)
         ImportLDrawOps.prefs.set("curvedWalls",           self.curvedWalls)
+        ImportLDrawOps.prefs.set("importCameras",         self.importCameras)
         ImportLDrawOps.prefs.set("linkParts",             self.linkParts)
         ImportLDrawOps.prefs.set("numberNodes",           self.numberNodes)
         ImportLDrawOps.prefs.set("positionObjectOnGroundAtOrigin", self.positionOnGround)
@@ -325,6 +333,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.Options.gaps               = self.addGaps
         loadldraw.Options.gapWidth           = self.gapsSize
         loadldraw.Options.curvedWalls        = self.curvedWalls
+        loadldraw.Options.importCameras      = self.importCameras
         loadldraw.Options.positionObjectOnGroundAtOrigin = self.positionOnGround
         loadldraw.Options.flattenHierarchy   = self.flatten
         loadldraw.Options.useLogoStuds       = self.useLogoStuds

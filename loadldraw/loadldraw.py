@@ -50,7 +50,7 @@ class Options:
 
     # Full filepath to ldraw folder. If empty, some standard locations are attempted
     ldrawDirectory     = r""            # Full filepath to the ldraw parts library (searches some standard locations if left blank)
-    instructionsLook   = True           # Set up scene to look like Lego Instruction booklets
+    instructionsLook   = False          # Set up scene to look like Lego Instruction booklets
     scale              = 0.01           # Size of the lego model to create. (0.04 is LeoCAD scale)
     useUnofficialParts = True           # Additionally searches <ldraw-dir>/unofficial/parts and /p for files
     resolution         = "Standard"     # Choose from "High", "Standard", or "Low"
@@ -64,6 +64,7 @@ class Options:
     gaps               = True           # Introduces a tiny space between each brick
     gapWidth           = 0.01           # Width of gap between bricks (in Blender units)
     curvedWalls        = True           # Manipulate normals to make surfaces look slightly concave
+    importCameras      = True           # LeoCAD can specify cameras within the ldraw file format. Choose to load them or ignore them.
     positionObjectOnGroundAtOrigin = True   # Centre the object at the origin, sitting on the z=0 plane
     flattenHierarchy   = False          # All parts are under the root object - no sub-models
     flattenGroups      = False          # All LEOCad groups are ignored - no groups
@@ -118,6 +119,7 @@ class Options:
 # Globals
 globalBrickCount = 0
 globalObjectsToAdd = []         # Blender objects to add to the scene
+globalCamerasToAdd = []         # Camera data to add to the scene
 globalMin = None
 globalMax = None
 globalContext = None
@@ -614,8 +616,78 @@ class FileSystem:
     Reads text files in different encodings. Locates full filepath for a part.
     """
 
+    # Takes a case-insensitive filepath and constructs a case sensitive version (based on an actual existing file)
+    # See https://stackoverflow.com/questions/8462449/python-case-insensitive-file-name/8462613#8462613
+    def pathInsensitive(path):
+        """
+        Get a case-insensitive path for use on a case sensitive system.
+
+        >>> path_insensitive('/Home')
+        '/home'
+        >>> path_insensitive('/Home/chris')
+        '/home/chris'
+        >>> path_insensitive('/HoME/CHris/')
+        '/home/chris/'
+        >>> path_insensitive('/home/CHRIS')
+        '/home/chris'
+        >>> path_insensitive('/Home/CHRIS/.gtk-bookmarks')
+        '/home/chris/.gtk-bookmarks'
+        >>> path_insensitive('/home/chris/.GTK-bookmarks')
+        '/home/chris/.gtk-bookmarks'
+        >>> path_insensitive('/HOME/Chris/.GTK-bookmarks')
+        '/home/chris/.gtk-bookmarks'
+        >>> path_insensitive("/HOME/Chris/I HOPE this doesn't exist")
+        "/HOME/Chris/I HOPE this doesn't exist"
+        """
+
+        return FileSystem.__path_insensitive(path) or path
+
+    def __path_insensitive(path):
+        """
+        Recursive part of path_insensitive to do the work.
+        """
+
+        if path == '' or os.path.exists(path):
+            return path
+
+        base = os.path.basename(path)  # may be a directory or a file
+        dirname = os.path.dirname(path)
+
+        suffix = ''
+        if not base:  # dir ends with a slash?
+            if len(dirname) < len(path):
+                suffix = path[:len(path) - len(dirname)]
+
+            base = os.path.basename(dirname)
+            dirname = os.path.dirname(dirname)
+
+        if not os.path.exists(dirname):
+            dirname = FileSystem.__path_insensitive(dirname)
+            if not dirname:
+                return
+
+        # at this point, the directory exists but not the file
+
+        try:  # we are expecting dirname to be a directory, but it could be a file
+            files = os.listdir(dirname)
+        except OSError:
+            return
+
+        baselow = base.lower()
+        try:
+            basefinal = next(fl for fl in files if fl.lower() == baselow)
+        except StopIteration:
+            return
+
+        if basefinal:
+            return os.path.join(dirname, basefinal) + suffix
+        else:
+            return
+
     def __checkEncoding(filepath):
         """Check the encoding of a file for Endian encoding."""
+
+        filepath = FileSystem.pathInsensitive(filepath)
 
         # Open it, read just the area containing a possible byte mark
         with open(filepath, "rb") as encode_check:
@@ -635,6 +707,8 @@ class FileSystem:
 
     def readTextFile(filepath):
         """Read a text file, with various checks for type of encoding"""
+
+        filepath = FileSystem.pathInsensitive(filepath)
 
         lines = None
         if os.path.exists(filepath):
@@ -659,13 +733,10 @@ class FileSystem:
         for path in Configure.searchPaths:
             # Perform a direct check
             fullPathName = os.path.join(path, partName)
+            fullPathName = FileSystem.pathInsensitive(fullPathName)
+
             if os.path.exists(fullPathName):
                 return fullPathName
-            else:
-                # Perform a normalized check
-                fullPathName = os.path.join(path, partName.lower())
-                if os.path.exists(fullPathName):
-                    return fullPathName
 
         return None
 
@@ -851,6 +922,41 @@ class LDrawNode:
         self.isRootNode     = isRootNode
         self.groupNames     = groupNames.copy()
 
+    def look_at(obj_camera, target, up_vector):
+        bpy.context.scene.update()
+        loc_camera = obj_camera.matrix_world.to_translation()
+
+        #print("CamLoc = " + str(loc_camera[0]) + "," + str(loc_camera[1]) + "," + str(loc_camera[2]))
+        #print("TarLoc = " + str(target[0]) + "," + str(target[1]) + "," + str(target[2]))
+        #print("UpVec  = " + str(up_vector[0]) + "," + str(up_vector[1]) + "," + str(up_vector[2]))
+
+        # back vector is a vector pointing from the target to the camera
+        back = loc_camera - target;
+        back.normalize()
+        
+        # If our back and up vectors are very close to pointing the same way (or opposite), choose a different up_vector
+        if (abs(back.dot(up_vector)) > 0.9999):
+            up_vector=mathutils.Vector((0.0,0.0,1.0))
+            if (abs(back.dot(up_vector)) > 0.9999):
+                up_vector=mathutils.Vector((1.0,0.0,0.0))
+
+        right = up_vector.cross(back)
+        right.normalize()
+        up = back.cross(right)
+        up.normalize()
+
+        row1 = [   right.x,   up.x,   back.x, loc_camera.x ]
+        row2 = [   right.y,   up.y,   back.y, loc_camera.y ]
+        row3 = [   right.z,   up.z,   back.z, loc_camera.z ]
+        row4 = [       0.0,    0.0,      0.0,          1.0 ]
+
+        #bpy.ops.mesh.primitive_ico_sphere_add(location=loc_camera+up,size=0.1)
+        #bpy.ops.mesh.primitive_cylinder_add(location=loc_camera+back,radius = 0.1, depth=0.2)
+        #bpy.ops.mesh.primitive_cone_add(location=loc_camera+right,radius1=0.1, radius2=0, depth=0.2)
+
+        obj_camera.matrix_world = mathutils.Matrix((row1, row2, row3, row4))
+        #print(obj_camera.matrix_world)
+        
     def isBlenderObjectNode(self):
         """
         Calculates if this node should become a Blender object.
@@ -962,6 +1068,47 @@ class LDrawNode:
             CachedGeometry.addToCache(key, bakedGeometry)
         assert len(bakedGeometry.faces) == len(bakedGeometry.faceColours)
         return (meshName, bakedGeometry)
+
+
+# **************************************************************************************
+# **************************************************************************************
+class LDrawCamera:
+    """Data about a camera"""
+    
+    def __init__(self):
+        self.vert_fov_degrees = 0.0
+        self.near            = 1.0
+        self.far             = 2.0
+        self.position        = mathutils.Vector((0.0, 0.0, 0.0))
+        self.target_position = mathutils.Vector((1.0, 1.0, 1.0))
+        self.up_vector       = mathutils.Vector((0.0, 1.0, 0.0))
+        self.name            = "Camera"
+        self.orthographic    = False
+        self.hidden          = False
+
+    def createCameraNode(self):
+        camData = bpy.data.cameras.new(self.name)
+        camera = bpy.data.objects.new(self.name, camData)
+
+        # Add to scene
+        camera.location = self.position
+        camera.data.sensor_fit = 'VERTICAL'
+        camera.data.angle = self.vert_fov_degrees * 3.1415926 / 180.0
+        camera.data.clip_end = self.far
+        camera.data.clip_start = self.near
+        camera.hide = self.hidden
+        self.hidden = False
+        if self.orthographic:
+            dist_target_to_camera = (self.position - self.target_position).length
+            camera.data.ortho_scale = dist_target_to_camera / 1.92
+            camera.data.type = 'ORTHO'
+            self.orthographic = False
+        else:
+            camera.data.type = 'PERSP'
+
+        bpy.context.scene.objects.link(camera)
+        LDrawNode.look_at(camera, self.target_position, self.up_vector)
+        return camera
 
 
 # **************************************************************************************
@@ -1082,6 +1229,8 @@ class LDrawFile:
     def __init__(self, filename, isFullFilepath, lines = None, isSubPart=False):
         """Loads an LDraw file (LDR, L3B, DAT or MPD)"""
 
+        global globalCamerasToAdd
+    
         self.filename         = filename
         self.lines            = lines
         self.isPart           = False
@@ -1103,9 +1252,10 @@ class LDrawFile:
         #       it's kind of documented: http://www.ldraw.org/article/415.html
         bfcLocalCull          = True
         bfcWindingCCW         = True
-        bfcInvertNext         = False
-        processingLSynthParts = False
-        
+        bfcInvertNext          = False
+        processingLSynthParts  = False
+        camera = LDrawCamera()
+
         currentGroupNames = []
 
         #debugPrint("Processing file {0}, isSubPart = {1}, found {2} lines".format(self.filename, self.isSubPart, len(self.lines)))
@@ -1117,8 +1267,8 @@ class LDrawFile:
             if len(parameters) == 0:
                 continue
                 
-            # Pad with empty values to ease parsing
-            while len(parameters) < 5:
+            # Pad with empty values to simplify parsing code
+            while len(parameters) < 9:
                 parameters.append(None)
 
             # Parse LDraw comments (some of which have special significance)
@@ -1166,6 +1316,45 @@ class LDrawFile:
                             currentGroupNames.append(" ".join(parameters[4:]))
                         elif parameters[3] == "END":
                             currentGroupNames.pop(-1)
+                    if parameters[2] == "CAMERA":
+                        if Options.importCameras:
+                            parameters = parameters[3:]
+                            while( len(parameters) > 0):
+                                if parameters[0] == "FOV":
+                                    camera.vert_fov_degrees = float(parameters[1])
+                                    parameters = parameters[2:]
+                                elif parameters[0] == "ZNEAR":
+                                    camera.near = Options.scale * float(parameters[1])
+                                    parameters = parameters[2:]
+                                elif parameters[0] == "ZFAR":
+                                    camera.far = Options.scale * float(parameters[1])
+                                    parameters = parameters[2:]
+                                elif parameters[0] == "POSITION":
+                                    camera.position = Math.scaleMatrix * mathutils.Vector((float(parameters[1]), float(parameters[2]), float(parameters[3])))
+                                    parameters = parameters[4:]
+                                elif parameters[0] == "TARGET_POSITION":
+                                    camera.target_position = Math.scaleMatrix * mathutils.Vector((float(parameters[1]), float(parameters[2]), float(parameters[3])))
+                                    parameters = parameters[4:]
+                                elif parameters[0] == "UP_VECTOR":
+                                    camera.up_vector = mathutils.Vector((float(parameters[1]), float(parameters[2]), float(parameters[3])))
+                                    parameters = parameters[4:]
+                                elif parameters[0] == "ORTHOGRAPHIC":
+                                    camera.orthographic = True
+                                    parameters = parameters[1:]
+                                elif parameters[0] == "HIDDEN":
+                                    camera.hidden = True
+                                    parameters = parameters[1:]
+                                elif parameters[0] == "NAME":
+                                    camera.name = line.split(" NAME ",1)[1].strip()
+                                
+                                    globalCamerasToAdd.append(camera)
+                                    camera = LDrawCamera()
+
+                                    # By definition this is the last of the parameters
+                                    parameters = []
+                                else:
+                                    parameters = parameters[1:]
+                                
 
             else:
                 if self.bfcCertified is None:
@@ -2707,13 +2896,82 @@ def setupLineset(lineset):
     lineset.linestyle.caps = 'ROUND'
 
 # **************************************************************************************
+def setupRealisticLook():
+    scene = bpy.context.scene
+    render = scene.render
+
+    # Check layer names to see if we were previously rendering instructions and change settings back.
+    layerNames = list(map((lambda x: x.name), render.layers))
+    if ("SolidBricks" in layerNames) or ("TransparentBricks" in layerNames):
+        render.use_freestyle = False
+
+        # Change camera back to Perspective
+        if scene.camera is not None:
+            scene.camera.data.type = 'PERSP'
+
+        # For Blender Render, reset to opaque background
+        render.alpha_mode = 'SKY'
+
+        # Turn off cycles transparency
+        scene.cycles.film_transparent = False
+
+        # If we have previously added render layers for instructions look, re-enable any disabled render layers
+        for i in range(len(render.layers)):
+            render.layers[i].use = True
+
+        # Un-name SolidBricks and TransparentBricks layers
+        if "SolidBricks" in layerNames:
+            scene.render.layers.remove(scene.render.layers["SolidBricks"])
+
+        if "TransparentBricks" in layerNames:
+            scene.render.layers.remove(scene.render.layers["TransparentBricks"])
+
+        # Re-enable all layers
+        for i in range(len(render.layers)):
+            render.layers[i].use = True
+
+        # Move each part to appropriate scene layer
+        for object in scene.objects:
+            # For each lego object...
+            if "Lego.isTransparent" in object:
+                # Turn on just the first scene layer
+                length = len(object.layers)
+                for i in range(length):
+                    object.layers[i] = (i == 0)
+
+        # Create Compositing Nodes
+        scene.use_nodes = True
+
+        # If scene nodes exist for compositing instructions look, remove them
+        nodeNames = list(map((lambda x: x.name), scene.node_tree.nodes))
+        if "Solid" in nodeNames:
+           scene.node_tree.nodes.remove(scene.node_tree.nodes["Solid"])
+
+        if "Trans" in nodeNames:
+           scene.node_tree.nodes.remove(scene.node_tree.nodes["Trans"])
+
+        if "Z Combine" in nodeNames:
+            scene.node_tree.nodes.remove(scene.node_tree.nodes["Z Combine"])
+
+        # Set up standard link from Render Layers to Composite
+        if "Render Layers" in nodeNames:
+            if "Composite" in nodeNames:
+                rl = scene.node_tree.nodes["Render Layers"]
+                zCombine = scene.node_tree.nodes["Composite"]
+
+                links = scene.node_tree.links
+                links.new(rl.outputs[0], zCombine.inputs[0])
+
+
+# **************************************************************************************
 def setupInstructionsLook():
     scene = bpy.context.scene
     render = scene.render
     render.use_freestyle = True
 
     # Change camera to Orthographic
-    scene.camera.data.type = 'ORTHO'
+    if scene.camera is not None:
+        scene.camera.data.type = 'ORTHO'
 
     # For Blender Render, set transparent background
     render.alpha_mode = 'TRANSPARENT'
@@ -2755,6 +3013,9 @@ def setupInstructionsLook():
     length = len(render.layers[solidLayer].layers)
     for i in range(length):
         render.layers[solidLayer].layers[i] = (i == 0)
+
+    length = len(render.layers[transLayer].layers)
+    for i in range(length):
         render.layers[transLayer].layers[i] = (i == 1)
 
     # Move each part to appropriate scene layer
@@ -2763,18 +3024,19 @@ def setupInstructionsLook():
         if "Lego.isTransparent" in object:
             isTransparent = object["Lego.isTransparent"]
 
-        # Turn on the appropriate layers
-        if isTransparent:
-            object.layers[1] = True
-        else:
-            object.layers[0] = True
-
-        # Turn off all other layers as appropriate
-        for i in range(length):
+            # Turn on the appropriate layers
             if isTransparent:
-                object.layers[i] = (i == 1)
+                object.layers[1] = True
             else:
-                object.layers[i] = (i == 0)
+                object.layers[0] = True
+
+            # Turn off all other layers as appropriate
+            length = len(object.layers)
+            for i in range(length):
+                if isTransparent:
+                    object.layers[i] = (i == 1)
+                else:
+                    object.layers[i] = (i == 0)
 
     # Find or create linesets
     solidLineset = None
@@ -2800,20 +3062,20 @@ def setupInstructionsLook():
 
     # Create Compositing Nodes
     scene.use_nodes = True
-    #bpy.context.scene.node_tree.nodes
+
     if "Solid" in scene.node_tree.nodes:
         solidLayer = scene.node_tree.nodes["Solid"]
     else:
         solidLayer = scene.node_tree.nodes.new('CompositorNodeRLayers')
         solidLayer.name = "Solid"
-        solidLayer.layer = 'SolidBricks'
+    solidLayer.layer = 'SolidBricks'
 
     if "Trans" in scene.node_tree.nodes:
         transLayer = scene.node_tree.nodes["Trans"]
     else:
         transLayer = scene.node_tree.nodes.new('CompositorNodeRLayers')
         transLayer.name = "Trans"
-        transLayer.layer = 'TransparentBricks'
+    transLayer.layer = 'TransparentBricks'
 
     if "Z Combine" in scene.node_tree.nodes:
         zCombine = scene.node_tree.nodes["Z Combine"]
@@ -2835,11 +3097,14 @@ def setupInstructionsLook():
     links.new(transLayer.outputs[2], zCombine.inputs[3])
     links.new(zCombine.outputs[0], composite.inputs[0])
     links.new(zCombine.outputs[1], composite.inputs[2])
-    
+
 
 # **************************************************************************************
 def loadFromFile(context, filename, isFullFilepath=True):
+    global globalCamerasToAdd
     global globalContext
+
+    globalCamerasToAdd = []
     globalContext = context
 
     # Make sure we have the latest configuration, including the latest ldraw directory 
@@ -2917,6 +3182,11 @@ def loadFromFile(context, filename, isFullFilepath=True):
     for ob in globalObjectsToAdd:
         bpy.context.scene.objects.link(ob)
 
+    # Add cameras to the scene
+    for ob in globalCamerasToAdd:
+        cam = ob.createCameraNode()
+        cam.parent = rootOb
+
     # Select the newly created root object
     rootOb.select = True
     bpy.context.scene.objects.active = rootOb
@@ -2932,9 +3202,12 @@ def loadFromFile(context, filename, isFullFilepath=True):
             # bpy.ops.object.transform_apply(location=True)
 
     globalObjectsToAdd = []
+    globalCamerasToAdd = []
 
     if Options.instructionsLook:
         setupInstructionsLook()
+    else:
+        setupRealisticLook()
 
     debugPrint("Load Done")
     return rootOb

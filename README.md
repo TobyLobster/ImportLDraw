@@ -15,7 +15,7 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 + **Mac** and **Windows** supported (and hopefully **Linux**, but this is currently untested).
 + **Bricksmith** compatible.
 + **MPD** file compatible.
-+ **LeoCAD** groups supported.
++ **LeoCAD** groups and cameras (both perspective and orthographic) supported.
 + **LSynth** bendable parts supported (synthesized models).
 + Both *Cycles* and *Blender Render* engines supported. It renders either engine from a single scene.
 + Import **photorealistic** look, or **Instructions** Look.
