@@ -664,6 +664,7 @@ class FileSystem:
             else:
                 # Perform a normalized check
                 fullPathName = os.path.join(path, partName.lower())
+                print(fullPathName)
                 if os.path.exists(fullPathName):
                     return fullPathName
 
@@ -678,9 +679,18 @@ class CachedFiles:
     __cache = {}        # Dictionary
 
     def getCached(key):
-        if key in CachedFiles.__cache:
-            return CachedFiles.__cache[key]
-        return None
+        # get the file from the cache associated with the exact key, and if none is
+		# found, try it with case insensitive keys
+        similarKey = None
+        for cacheKey in CachedFiles.__cache:
+            if cacheKey == key:
+                return CachedFiles.__cache[key]
+            elif cacheKey.lower() == key.lower():
+                similarKey = cacheKey
+        if similarKey is not None:
+            return CachedFiles.__cache[similarKey]
+        else:
+            return None		
 
     def addToCache(key, value):
         CachedFiles.__cache[key] = value
