@@ -1076,15 +1076,15 @@ class LDrawCamera:
     """Data about a camera"""
     
     def __init__(self):
-        self.vert_fov_degrees = 0.0
-        self.near            = 1.0
-        self.far             = 2.0
-        self.position        = mathutils.Vector((0.0, 0.0, 0.0))
-        self.target_position = mathutils.Vector((1.0, 1.0, 1.0))
-        self.up_vector       = mathutils.Vector((0.0, 1.0, 0.0))
-        self.name            = "Camera"
-        self.orthographic    = False
-        self.hidden          = False
+        self.vert_fov_degrees = 30.0
+        self.near             = 25.0
+        self.far              = 50000.0
+        self.position         = mathutils.Vector((0.0, 0.0, 0.0))
+        self.target_position  = mathutils.Vector((1.0, 0.0, 0.0))
+        self.up_vector        = mathutils.Vector((0.0, 1.0, 0.0))
+        self.name             = "Camera"
+        self.orthographic     = False
+        self.hidden           = False
 
     def createCameraNode(self):
         camData = bpy.data.cameras.new(self.name)
@@ -2300,7 +2300,7 @@ class BlenderMaterials:
 
     # **************************************************************************************
     def __createBlenderLegoEmissionNodeGroup():
-        groupName = BlenderMaterials.__getGroupName('Lego Rubber Translucent')
+        groupName = BlenderMaterials.__getGroupName('Lego Emission')
         if bpy.data.node_groups.get(groupName) is None:
             debugPrint("createBlenderLegoEmissionNodeGroup #create")
 
