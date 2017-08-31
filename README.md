@@ -20,6 +20,7 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 + Both *Cycles* and *Blender Render* engines supported. It renders either engine from a single scene.
 + Import **photorealistic** look, or **Instructions** Look.
 + **Realistic materials** including standard brick material, transparent, rubber, and even the less common materials like chrome, metal, pearlescent, glow-in-the-dark, glitter and speckle.
++ **Principled Shader supported** Uses Blender's new 'Principled Shader' where available for optimal look (but still works well without).
 + **Accurate colour handling**. Correct colour space management is used so that e.g. black parts look black.
 + **Direct colours** supported.
 + **Back face culling** - fully parses all BFC information, for accurate normals.

@@ -68,6 +68,7 @@ class Options:
     positionObjectOnGroundAtOrigin = True   # Centre the object at the origin, sitting on the z=0 plane
     flattenHierarchy   = False          # All parts are under the root object - no sub-models
     flattenGroups      = False          # All LEOCad groups are ignored - no groups
+    usePrincipledShaderWhenAvailable = True  # Use the new principled shader
 
     # We have the option of including the 'LEGO' logo on each stud
     useLogoStuds       = False          # Use the studs with the 'LEGO' logo on them
@@ -1406,6 +1407,7 @@ class BlenderMaterials:
     """Creates and stores a cache of materials for Blender"""
 
     __material_list = {}
+    __hasPrincipledShader = "ShaderNodeBsdfPrincipled" in [node.nodetype for node in getattr(bpy.types, "NODE_MT_category_SH_NEW_SHADER").category.items(None)]
 
     def __getGroupName(name):
         if Options.instructionsLook:
@@ -1467,9 +1469,7 @@ class BlenderMaterials:
         links.new(input.outputs[0], output.inputs[0])
 
         if Options.instructionsLook and alpha < 1.0:
-            mult = nodes.new('ShaderNodeMath')
-            mult.operation = 'MULTIPLY'
-            mult.location = 200, -410
+            mult = BlenderMaterials.__nodeMath(nodes, 'MULTIPLY', 200, -410);
             links.new(input.outputs[1], mult.inputs[0])
             links.new(mult.outputs[0], output.inputs[1])
         else:
@@ -1647,7 +1647,7 @@ class BlenderMaterials:
         node.location = x, y
         return node
 
-    def nodeDielectric(nodes, roughness, reflection, transparency, ior, x, y):
+    def __nodeDielectric(nodes, roughness, reflection, transparency, ior, x, y):
         node = nodes.new('ShaderNodeGroup')
         node.node_tree = bpy.data.node_groups['PBR-Dielectric']
         node.location = x, y
@@ -1655,6 +1655,53 @@ class BlenderMaterials:
         node.inputs['Reflection'].default_value = reflection
         node.inputs['Transparency'].default_value = transparency
         node.inputs['IOR'].default_value = ior
+        return node
+
+    def __nodePrincipled(nodes, subsurface, sub_rad, metallic, roughness, clearcoat, clearcoat_roughness, ior, transmission, x, y):
+        node = nodes.new('ShaderNodeBsdfPrincipled')
+        node.location = x, y
+        node.inputs['Subsurface'].default_value = subsurface
+        node.inputs['Subsurface Radius'].default_value = mathutils.Vector( (sub_rad, sub_rad, sub_rad) )
+        node.inputs['Metallic'].default_value = metallic
+        node.inputs['Roughness'].default_value = roughness
+        node.inputs['Clearcoat'].default_value = clearcoat
+        node.inputs['Clearcoat Roughness'].default_value = clearcoat_roughness
+        node.inputs['IOR'].default_value = ior
+        node.inputs['Transmission'].default_value = transmission
+        return node
+
+    def __nodeHSV(nodes, h, s, v, x, y):
+        node = nodes.new('ShaderNodeHueSaturation')
+        node.location = x, y
+        node.inputs[0].default_value = h
+        node.inputs[1].default_value = s
+        node.inputs[2].default_value = v
+        return node
+
+    def __nodeSeparateHSV(nodes, x, y):
+        node = nodes.new('ShaderNodeSeparateHSV')
+        node.location = x, y
+        return node
+
+    def __nodeCombineHSV(nodes, x, y):
+        node = nodes.new('ShaderNodeCombineHSV')
+        node.location = x, y
+        return node
+        
+    def __nodeTexCoord(nodes, x, y):
+        node = nodes.new('ShaderNodeTexCoord')
+        node.location = x, y
+        return node
+
+    def __nodeTexWave(nodes, wave_type, wave_profile, scale, distortion, detail, detailScale, x, y):
+        node = nodes.new('ShaderNodeTexWave')
+        node.wave_type = wave_type
+        node.wave_profile = wave_profile
+        node.inputs[1].default_value = scale
+        node.inputs[2].default_value = distortion
+        node.inputs[3].default_value = detail
+        node.inputs[4].default_value = detailScale
+        node.location = x, y
         return node
 
     def __nodeDiffuse(nodes, roughness, x, y):
@@ -1697,6 +1744,17 @@ class BlenderMaterials:
         node.location = x, y
         return node
 
+    def __nodeAddShader(nodes, x, y):
+        node = nodes.new('ShaderNodeAddShader')
+        node.location = x, y
+        return node
+
+    def __nodeVolume(nodes, density, x, y):
+        node = nodes.new('ShaderNodeVolumeAbsorption')
+        node.inputs['Density'].default_value = density
+        node.location = x, y
+        return node
+
     def __nodeLightPath(nodes, x, y):
         node = nodes.new('ShaderNodeLightPath')
         node.location = x, y
@@ -1704,6 +1762,12 @@ class BlenderMaterials:
 
     def __nodeMath(nodes, operation, x, y):
         node = nodes.new('ShaderNodeMath')
+        node.operation = operation
+        node.location = x, y
+        return node
+
+    def __nodeVectorMath(nodes, operation, x, y):
+        node = nodes.new('ShaderNodeVectorMath')
         node.operation = operation
         node.location = x, y
         return node
@@ -1733,6 +1797,28 @@ class BlenderMaterials:
         node.color_ramp.elements[0].color = colour1
         node.color_ramp.elements[1].position = pos2
         node.color_ramp.elements[1].color = colour2
+        return node
+
+    def __nodeNoiseTexture(nodes, scale, detail, distortion, x, y):
+        node = nodes.new('ShaderNodeTexNoise')
+        node.location = x, y
+        node.inputs['Scale'].default_value = scale
+        node.inputs['Detail'].default_value = detail
+        node.inputs['Distortion'].default_value = distortion
+        return node
+        
+    def __nodeBumpShader(nodes, strength, distance, x, y):
+        node = nodes.new('ShaderNodeBump')
+        node.location = x, y
+        node.inputs[0].default_value = strength
+        node.inputs[1].default_value = distance
+        return node
+        
+    def __nodeRefraction(nodes, roughness, ior, x, y):
+        node = nodes.new('ShaderNodeBsdfRefraction')
+        node.inputs['Roughness'].default_value = roughness
+        node.inputs['IOR'].default_value = ior
+        node.location = x, y
         return node
 
     def __createCyclesConcaveWalls(nodes, links, strength):
@@ -1902,32 +1988,22 @@ class BlenderMaterials:
             group.outputs.new('NodeSocketVectorDirection', 'Vector')
 
             # create nodes
-            node_texture_coordinate = group.nodes.new('ShaderNodeTexCoord')
-            node_texture_coordinate.location = -730, 0
+            node_texture_coordinate = BlenderMaterials.__nodeTexCoord(group.nodes, -730, 0)
 
-            node_vector_subtraction1 = group.nodes.new('ShaderNodeVectorMath')
-            node_vector_subtraction1.operation = 'SUBTRACT'
+            node_vector_subtraction1 = BlenderMaterials.__nodeVectorMath(group.nodes, 'SUBTRACT', -535, 0)
             node_vector_subtraction1.inputs[1].default_value[0] = 0.5
             node_vector_subtraction1.inputs[1].default_value[1] = 0.5
             node_vector_subtraction1.inputs[1].default_value[2] = 0.5
-            node_vector_subtraction1.location = -535, 0
 
-            node_normalize = group.nodes.new('ShaderNodeVectorMath')
-            node_normalize.operation = 'NORMALIZE'
-            node_normalize.location = -535, -245
-
-            node_dot_product = group.nodes.new('ShaderNodeVectorMath')
-            node_dot_product.operation = 'DOT_PRODUCT'
-            node_dot_product.location = -340, -125
+            node_normalize = BlenderMaterials.__nodeVectorMath(group.nodes, 'NORMALIZE', -535, -245)
+            node_dot_product = BlenderMaterials.__nodeVectorMath(group.nodes, 'DOT_PRODUCT', -340, -125)
 
             node_multiply = group.nodes.new('ShaderNodeMixRGB')
             node_multiply.blend_type = 'MULTIPLY'
             node_multiply.inputs['Fac'].default_value = 1.0
             node_multiply.location = -145, -125
 
-            node_vector_subtraction2 = group.nodes.new('ShaderNodeVectorMath')
-            node_vector_subtraction2.operation = 'SUBTRACT'
-            node_vector_subtraction2.location = 40, 0
+            node_vector_subtraction2 = BlenderMaterials.__nodeVectorMath(group.nodes, 'SUBTRACT', 40, 0)
 
             # link nodes together
             group.links.new(node_texture_coordinate.outputs['Generated'], node_vector_subtraction1.inputs[0])
@@ -1954,29 +2030,13 @@ class BlenderMaterials:
             node_separate_xyz = group.nodes.new('ShaderNodeSeparateXYZ')
             node_separate_xyz.location = -385, -140
 
-            node_abs_x = group.nodes.new('ShaderNodeMath')
-            node_abs_x.operation = 'ABSOLUTE'
-            node_abs_x.location = -180, 180
+            node_abs_x = BlenderMaterials.__nodeMath(group.nodes, 'ABSOLUTE', -180, 180)
+            node_abs_y = BlenderMaterials.__nodeMath(group.nodes, 'ABSOLUTE', -180, 0)
+            node_abs_z = BlenderMaterials.__nodeMath(group.nodes, 'ABSOLUTE', -180, -180)
 
-            node_abs_y = group.nodes.new('ShaderNodeMath')
-            node_abs_y.operation = 'ABSOLUTE'
-            node_abs_y.location = -180, 0
-
-            node_abs_z = group.nodes.new('ShaderNodeMath')
-            node_abs_z.operation = 'ABSOLUTE'
-            node_abs_z.location = -180, -180
-
-            node_power_x = group.nodes.new('ShaderNodeMath')
-            node_power_x.operation = 'POWER'
-            node_power_x.location = 20, 180
-
-            node_power_y = group.nodes.new('ShaderNodeMath')
-            node_power_y.operation = 'POWER'
-            node_power_y.location = 20, 0
-
-            node_power_z = group.nodes.new('ShaderNodeMath')
-            node_power_z.operation = 'POWER'
-            node_power_z.location = 20, -180
+            node_power_x = BlenderMaterials.__nodeMath(group.nodes, 'POWER', 20, 180)
+            node_power_y = BlenderMaterials.__nodeMath(group.nodes, 'POWER', 20, 0)
+            node_power_z = BlenderMaterials.__nodeMath(group.nodes, 'POWER', 20, -180)
 
             node_combine_xyz = group.nodes.new('ShaderNodeCombineXYZ')
             node_combine_xyz.location = 215, 0
@@ -2010,9 +2070,7 @@ class BlenderMaterials:
             group.outputs.new('NodeSocketVectorDirection','Normal')
 
             # create nodes
-            node_power = group.nodes.new('ShaderNodeMath')
-            node_power.operation = 'POWER'
-            node_power.location = -290, 150
+            node_power = BlenderMaterials.__nodeMath(group.nodes, 'POWER', -290, 150)
 
             node_colorramp = group.nodes.new('ShaderNodeValToRGB')
             node_colorramp.color_ramp.color_mode = 'RGB'
@@ -2175,10 +2233,8 @@ class BlenderMaterials:
             node_reflection.node_tree = bpy.data.node_groups['PBR-Reflection']
             node_reflection.location = (100,115)
 
-            node_power = group.nodes.new('ShaderNodeMath')
-            node_power.operation = 'POWER'
+            node_power = BlenderMaterials.__nodeMath(group.nodes, 'POWER', -330, -105)
             node_power.inputs[1].default_value = 2.0
-            node_power.location = (-330,-105)
 
             node_glass = group.nodes.new('ShaderNodeBsdfGlass')
             node_glass.location = (100,-105)
@@ -2220,12 +2276,20 @@ class BlenderMaterials:
                 group.links.new(node_input.outputs['Color'],       node_emission.inputs['Color'])
                 group.links.new(node_emission.outputs['Emission'], node_output.inputs['Shader'])
             else:
-                node_dielectric = BlenderMaterials.nodeDielectric(group.nodes, 0.2, 0.1, 0.0, 1.46, 0, 0)
+                if BlenderMaterials.usePrincipledShader:
+                    node_main = BlenderMaterials.__nodePrincipled(group.nodes, 0.05, 0.05, 0.0, 0.1, 0.0, 0.0, 1.45, 0.0, 0, 0)
+                    output_name = 'BSDF'
+                    color_name = 'Base Color'
+                    group.links.new(node_input.outputs['Color'],        node_main.inputs['Subsurface Color'])
+                else:
+                    node_main = BlenderMaterials.__nodeDielectric(group.nodes, 0.2, 0.1, 0.0, 1.46, 0, 0)
+                    output_name = 'Shader'
+                    color_name = 'Color'
 
                 # link nodes together
-                group.links.new(node_input.outputs['Color'],       node_dielectric.inputs['Color'])
-                group.links.new(node_input.outputs['Normal'],      node_dielectric.inputs['Normal'])
-                group.links.new(node_dielectric.outputs['Shader'], node_output.inputs['Shader'])
+                group.links.new(node_input.outputs['Color'],        node_main.inputs[color_name])
+                group.links.new(node_input.outputs['Normal'],       node_main.inputs['Normal'])
+                group.links.new(node_main.outputs[output_name],     node_output.inputs['Shader'])
 
     # **************************************************************************************
     def __createBlenderLegoTransparentNodeGroup():
@@ -2256,29 +2320,53 @@ class BlenderMaterials:
                 group.links.new(node_less.outputs[0],                       node_mix2.inputs['Fac'])
                 group.links.new(node_mix2.outputs[0],                       node_output.inputs['Shader'])
             else:
-                node_dielectric = BlenderMaterials.nodeDielectric(group.nodes, 0.15, 0.1, 0.97, 1.46, 0, 0)
+                if BlenderMaterials.usePrincipledShader:
+                    node_principled  = BlenderMaterials.__nodePrincipled(group.nodes, 0.0, 0.0, 0.0, 0.05, 0.0, 0.0, 1.585, 1.0, 45, 340)
 
-                # link nodes together
-                group.links.new(node_input.outputs['Color'],       node_dielectric.inputs['Color'])
-                group.links.new(node_input.outputs['Normal'],      node_dielectric.inputs['Normal'])
-                group.links.new(node_dielectric.outputs['Shader'], node_output.inputs['Shader'])
+                    # link nodes together
+                    group.links.new(node_input.outputs['Color'],       node_principled.inputs['Base Color'])
+                    group.links.new(node_input.outputs['Normal'],      node_principled.inputs['Normal'])
+                    group.links.new(node_principled.outputs['BSDF'],   node_output.inputs['Shader'])
+                else:
+                    node_main = BlenderMaterials.__nodeDielectric(group.nodes, 0.15, 0.1, 0.97, 1.46, 0, 0)
+
+                    # link nodes together
+                    group.links.new(node_input.outputs['Color'],       node_main.inputs['Color'])
+                    group.links.new(node_input.outputs['Normal'],      node_main.inputs['Normal'])
+                    group.links.new(node_main.outputs['Shader'],       node_output.inputs['Shader'])
 
     # **************************************************************************************
     def __createBlenderLegoRubberNodeGroup():
         groupName = BlenderMaterials.__getGroupName('Lego Rubber Solid')
         if bpy.data.node_groups.get(groupName) is None:
-            debugPrint("createBlenderLegoTransparentNodeGroup #create")
+            debugPrint("createBlenderLegoRubberNodeGroup #create")
             # create a group
-            group, node_input, node_output = BlenderMaterials.__createGroup(groupName, -250, 0, 250, 0, True)
+            group, node_input, node_output = BlenderMaterials.__createGroup(groupName, 45-950, 340-50, 45+200, 340-5, True)
             group.inputs.new('NodeSocketColor','Color')
             group.inputs.new('NodeSocketVectorDirection','Normal')
 
-            node_dielectric = BlenderMaterials.nodeDielectric(group.nodes, 0.5, 0.07, 0.0, 1.52, 0, 0)
+            if BlenderMaterials.usePrincipledShader:
+                node_noise = BlenderMaterials.__nodeNoiseTexture(group.nodes, 250, 2, 0.0, 45-770, 340-200)
+                node_bump1 = BlenderMaterials.__nodeBumpShader(group.nodes, 1.0, 0.3, 45-366, 340-200)
+                node_bump2 = BlenderMaterials.__nodeBumpShader(group.nodes, 1.0, 0.1, 45-184, 340-115)
+                node_subtract = BlenderMaterials.__nodeMath(group.nodes, 'SUBTRACT', 45-570, 340-216)
+                node_principled  = BlenderMaterials.__nodePrincipled(group.nodes, 0.0, 0.0, 0.0, 0.4, 0.03, 0.0, 1.45, 0.0, 45, 340)
 
-            # link nodes together
-            group.links.new(node_input.outputs['Color'],       node_dielectric.inputs['Color'])
-            group.links.new(node_input.outputs['Normal'],      node_dielectric.inputs['Normal'])
-            group.links.new(node_dielectric.outputs['Shader'], node_output.inputs['Shader'])
+                node_subtract.inputs[1].default_value = 0.4
+
+                group.links.new(node_input.outputs['Color'],       node_principled.inputs['Base Color'])
+                group.links.new(node_principled.outputs['BSDF'],   node_output.inputs[0])
+                group.links.new(node_noise.outputs['Color'],       node_subtract.inputs[0])
+                group.links.new(node_subtract.outputs[0],          node_bump1.inputs['Height'])
+                group.links.new(node_bump1.outputs['Normal'],      node_bump2.inputs['Normal'])
+                group.links.new(node_bump2.outputs['Normal'],      node_principled.inputs['Normal'])
+            else:
+                node_dielectric = BlenderMaterials.__nodeDielectric(group.nodes, 0.5, 0.07, 0.0, 1.52, 0, 0)
+
+                # link nodes together
+                group.links.new(node_input.outputs['Color'],       node_dielectric.inputs['Color'])
+                group.links.new(node_input.outputs['Normal'],      node_dielectric.inputs['Normal'])
+                group.links.new(node_dielectric.outputs['Shader'], node_output.inputs['Shader'])
 
 
     # **************************************************************************************
@@ -2291,12 +2379,36 @@ class BlenderMaterials:
             group.inputs.new('NodeSocketColor','Color')
             group.inputs.new('NodeSocketVectorDirection','Normal')
 
-            node_dielectric = BlenderMaterials.nodeDielectric(group.nodes, 0.15, 0.1, 0.97, 1.46, 0, 0)
+            if BlenderMaterials.usePrincipledShader:
+                node_noise = BlenderMaterials.__nodeNoiseTexture(group.nodes, 250, 2, 0.0, 45-770, 340-200)
+                node_bump1 = BlenderMaterials.__nodeBumpShader(group.nodes, 1.0, 0.3, 45-366, 340-200)
+                node_bump2 = BlenderMaterials.__nodeBumpShader(group.nodes, 1.0, 0.1, 45-184, 340-115)
+                node_subtract = BlenderMaterials.__nodeMath(group.nodes, 'SUBTRACT', 45-570, 340-216)
+                node_principled  = BlenderMaterials.__nodePrincipled(group.nodes, 0.0, 0.0, 0.0, 0.4, 0.03, 0.0, 1.45, 0.0, 45, 340)
+                node_mix = BlenderMaterials.__nodeMix(group.nodes, 0.8, 300, 290)
+                node_refraction = BlenderMaterials.__nodeRefraction(group.nodes, 0.0, 1.45, 290-242, 154-330)
+                node_input.location = -320, 290
+                node_output.location = 530, 285
 
-            # link nodes together
-            group.links.new(node_input.outputs['Color'],       node_dielectric.inputs['Color'])
-            group.links.new(node_input.outputs['Normal'],      node_dielectric.inputs['Normal'])
-            group.links.new(node_dielectric.outputs['Shader'], node_output.inputs['Shader'])
+                node_subtract.inputs[1].default_value = 0.4
+
+                group.links.new(node_input.outputs['Normal'],      node_refraction.inputs['Normal'])
+                group.links.new(node_refraction.outputs[0],        node_mix.inputs[2])
+                group.links.new(node_principled.outputs[0],        node_mix.inputs[1])
+                group.links.new(node_mix.outputs[0],               node_output.inputs[0])
+                group.links.new(node_input.outputs['Color'],       node_principled.inputs['Base Color'])
+                group.links.new(node_noise.outputs['Color'],       node_subtract.inputs[0])
+                group.links.new(node_subtract.outputs[0],          node_bump1.inputs['Height'])
+                group.links.new(node_bump1.outputs['Normal'],      node_bump2.inputs['Normal'])
+                group.links.new(node_bump2.outputs['Normal'],      node_principled.inputs['Normal'])
+                group.links.new(node_mix.outputs[0],               node_output.inputs[0])
+            else:
+                node_dielectric = BlenderMaterials.__nodeDielectric(group.nodes, 0.15, 0.1, 0.97, 1.46, 0, 0)
+
+                # link nodes together
+                group.links.new(node_input.outputs['Color'],       node_dielectric.inputs['Color'])
+                group.links.new(node_input.outputs['Normal'],      node_dielectric.inputs['Normal'])
+                group.links.new(node_dielectric.outputs['Shader'], node_output.inputs['Shader'])
 
     # **************************************************************************************
     def __createBlenderLegoEmissionNodeGroup():
@@ -2310,17 +2422,25 @@ class BlenderMaterials:
             group.inputs.new('NodeSocketFloatFactor','Luminance')
             group.inputs.new('NodeSocketVectorDirection','Normal')
 
-            node_trans = BlenderMaterials.__nodeTranslucent(group.nodes, -242, 154)
-            node_emit  = BlenderMaterials.__nodeEmission(group.nodes, -242, -23)
+            node_emit  = BlenderMaterials.__nodeEmission(group.nodes, -242, -123)
             node_mix   = BlenderMaterials.__nodeMix(group.nodes, 0.5, 0, 90)
 
+            if BlenderMaterials.usePrincipledShader:
+                node_main = BlenderMaterials.__nodePrincipled(group.nodes, 1.0, 0.05, 0.0, 0.5, 0.0, 0.03, 1.45, 0.0, -242, 154+240)
+                group.links.new(node_input.outputs['Color'],     node_main.inputs['Subsurface Color'])
+                group.links.new(node_input.outputs['Color'],     node_emit.inputs['Color'])
+                main_colour = 'Base Color'
+            else:
+                node_main = BlenderMaterials.__nodeTranslucent(group.nodes, -242, 154)
+                main_colour = 'Color'
+
             # link nodes together
-            group.links.new(node_input.outputs['Color'],     node_trans.inputs['Color'])
-            group.links.new(node_input.outputs['Normal'],    node_trans.inputs['Normal'])
+            group.links.new(node_input.outputs['Color'],     node_main.inputs[main_colour])
+            group.links.new(node_input.outputs['Normal'],    node_main.inputs['Normal'])
             group.links.new(node_input.outputs['Luminance'], node_mix.inputs[0])
-            group.links.new(node_trans.outputs[0],        node_mix.inputs[1])
-            group.links.new(node_emit.outputs[0],         node_mix.inputs[2])
-            group.links.new(node_mix.outputs[0],          node_output.inputs[0])
+            group.links.new(node_main.outputs[0],            node_mix.inputs[1])
+            group.links.new(node_emit.outputs[0],            node_mix.inputs[2])
+            group.links.new(node_mix.outputs[0],             node_output.inputs[0])
 
     # **************************************************************************************
     def __createBlenderLegoChromeNodeGroup():
@@ -2333,17 +2453,29 @@ class BlenderMaterials:
             group.inputs.new('NodeSocketColor','Color')
             group.inputs.new('NodeSocketVectorDirection','Normal')
 
-            node_glossyOne = BlenderMaterials.__nodeGlossy(group.nodes, (1,1,1,1), 0.03, 'GGX', -242, 154)
-            node_glossyTwo = BlenderMaterials.__nodeGlossy(group.nodes, (1.0, 1.0, 1.0, 1.0), 0.03, 'BECKMANN', -242, -23)
-            node_mix       = BlenderMaterials.__nodeMix(group.nodes, 0.01, 0, 90)
+            if BlenderMaterials.usePrincipledShader:
+                node_hsv         = BlenderMaterials.__nodeHSV(group.nodes, 0.5, 0.9, 2.0, -90, 0)
+                node_principled  = BlenderMaterials.__nodePrincipled(group.nodes, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 2.4, 0.0, 100, 0)
 
-            # link nodes together
-            group.links.new(node_input.outputs['Color'],  node_glossyOne.inputs['Color'])
-            group.links.new(node_input.outputs['Normal'], node_glossyOne.inputs['Normal'])
-            group.links.new(node_input.outputs['Normal'], node_glossyTwo.inputs['Normal'])
-            group.links.new(node_glossyOne.outputs[0],    node_mix.inputs[1])
-            group.links.new(node_glossyTwo.outputs[0],    node_mix.inputs[2])
-            group.links.new(node_mix.outputs[0],          node_output.inputs[0])
+                node_output.location = (575, -140)
+
+                # link nodes together
+                group.links.new(node_input.outputs['Color'],       node_hsv.inputs['Color'])
+                group.links.new(node_input.outputs['Normal'],      node_principled.inputs['Normal'])
+                group.links.new(node_hsv.outputs['Color'],         node_principled.inputs['Base Color'])
+                group.links.new(node_principled.outputs['BSDF'],   node_output.inputs[0])
+            else:
+                node_glossyOne = BlenderMaterials.__nodeGlossy(group.nodes, (1,1,1,1), 0.03, 'GGX', -242, 154)
+                node_glossyTwo = BlenderMaterials.__nodeGlossy(group.nodes, (1.0, 1.0, 1.0, 1.0), 0.03, 'BECKMANN', -242, -23)
+                node_mix       = BlenderMaterials.__nodeMix(group.nodes, 0.01, 0, 90)
+
+                # link nodes together
+                group.links.new(node_input.outputs['Color'],  node_glossyOne.inputs['Color'])
+                group.links.new(node_input.outputs['Normal'], node_glossyOne.inputs['Normal'])
+                group.links.new(node_input.outputs['Normal'], node_glossyTwo.inputs['Normal'])
+                group.links.new(node_glossyOne.outputs[0],    node_mix.inputs[1])
+                group.links.new(node_glossyTwo.outputs[0],    node_mix.inputs[2])
+                group.links.new(node_mix.outputs[0],          node_output.inputs[0])
 
     # **************************************************************************************
     def __createBlenderLegoPearlescentNodeGroup():
@@ -2352,22 +2484,47 @@ class BlenderMaterials:
             debugPrint("createBlenderLegoPearlescentNodeGroup #create")
 
             # create a group
-            group, node_input, node_output = BlenderMaterials.__createGroup(groupName, -450, 90, 250, 0, True)
+            group, node_input, node_output = BlenderMaterials.__createGroup(groupName, -450, 90, 630, 95, True)
             group.inputs.new('NodeSocketColor','Color')
             group.inputs.new('NodeSocketVectorDirection','Normal')
 
-            node_diffuse = BlenderMaterials.__nodeDiffuse(group.nodes, 0.0, -242, -23)
-            node_glossy  = BlenderMaterials.__nodeGlossy(group.nodes, (1,1,1,1), 0.05, 'BECKMANN', -242, 154)
-            node_mix     = BlenderMaterials.__nodeMix(group.nodes, 0.4, 0, 90)
+            if BlenderMaterials.usePrincipledShader:
+                node_principled  = BlenderMaterials.__nodePrincipled(group.nodes, 1.0, 0.25, 0.5, 0.2, 1.0, 0.2, 1.6, 0.0, 310, 95)
+                node_sep_hsv     = BlenderMaterials.__nodeSeparateHSV(group.nodes, -240, 75)
+                node_multiply    = BlenderMaterials.__nodeMath(group.nodes, 'MULTIPLY', -60, 0)
+                node_com_hsv     = BlenderMaterials.__nodeCombineHSV(group.nodes, 110, 95)
+                node_tex_coord   = BlenderMaterials.__nodeTexCoord(group.nodes, -730, -223)
+                node_tex_wave    = BlenderMaterials.__nodeTexWave(group.nodes, 'BANDS', 'SIN', 0.5, 40, 1, 1.5, -520, -190)
+                node_color_ramp  = BlenderMaterials.__nodeColorRamp(group.nodes, 0.329, (0.89, 0.89, 0.89, 1), 0.820, (1, 1, 1, 1), -340, -70)
+                element = node_color_ramp.color_ramp.elements.new(1.0)
+                element.color = (1.118, 1.118, 1.118, 1)
 
-            # link nodes together
-            group.links.new(node_input.outputs['Color'],  node_diffuse.inputs['Color'])
-            group.links.new(node_input.outputs['Color'],  node_glossy.inputs['Color'])
-            group.links.new(node_input.outputs['Normal'], node_diffuse.inputs['Normal'])
-            group.links.new(node_input.outputs['Normal'], node_glossy.inputs['Normal'])
-            group.links.new(node_glossy.outputs[0],   node_mix.inputs[1])
-            group.links.new(node_diffuse.outputs[0],  node_mix.inputs[2])
-            group.links.new(node_mix.outputs[0],      node_output.inputs[0])
+                # link nodes together
+                group.links.new(node_input.outputs['Color'], node_sep_hsv.inputs['Color'])
+                group.links.new(node_input.outputs['Normal'], node_principled.inputs['Normal'])
+                group.links.new(node_sep_hsv.outputs['H'], node_com_hsv.inputs['H'])
+                group.links.new(node_sep_hsv.outputs['S'], node_com_hsv.inputs['S'])
+                group.links.new(node_sep_hsv.outputs['V'], node_multiply.inputs[0])
+                group.links.new(node_com_hsv.outputs['Color'], node_principled.inputs['Base Color'])
+                group.links.new(node_com_hsv.outputs['Color'], node_principled.inputs['Subsurface Color'])
+                group.links.new(node_tex_coord.outputs['Object'], node_tex_wave.inputs['Vector'])
+                group.links.new(node_tex_wave.outputs['Fac'], node_color_ramp.inputs['Fac'])
+                group.links.new(node_color_ramp.outputs['Color'], node_multiply.inputs[1])
+                group.links.new(node_multiply.outputs[0], node_com_hsv.inputs['V'])
+                group.links.new(node_principled.outputs['BSDF'], node_output.inputs[0])
+            else:
+                node_diffuse = BlenderMaterials.__nodeDiffuse(group.nodes, 0.0, -242, -23)
+                node_glossy  = BlenderMaterials.__nodeGlossy(group.nodes, (1,1,1,1), 0.05, 'BECKMANN', -242, 154)
+                node_mix     = BlenderMaterials.__nodeMix(group.nodes, 0.4, 0, 90)
+
+                # link nodes together
+                group.links.new(node_input.outputs['Color'],  node_diffuse.inputs['Color'])
+                group.links.new(node_input.outputs['Color'],  node_glossy.inputs['Color'])
+                group.links.new(node_input.outputs['Normal'], node_diffuse.inputs['Normal'])
+                group.links.new(node_input.outputs['Normal'], node_glossy.inputs['Normal'])
+                group.links.new(node_glossy.outputs[0],   node_mix.inputs[1])
+                group.links.new(node_diffuse.outputs[0],  node_mix.inputs[2])
+                group.links.new(node_mix.outputs[0],      node_output.inputs[0])
 
     # **************************************************************************************
     def __createBlenderLegoMetalNodeGroup():
@@ -2380,18 +2537,25 @@ class BlenderMaterials:
             group.inputs.new('NodeSocketColor','Color')
             group.inputs.new('NodeSocketVectorDirection','Normal')
 
-            node_dielectric = BlenderMaterials.nodeDielectric(group.nodes, 0.05, 0.2, 0.0, 1.46, -242, 0)
-            node_glossy = BlenderMaterials.__nodeGlossy(group.nodes, (1,1,1,1), 0.2, 'BECKMANN', -242, 154)
-            node_mix = BlenderMaterials.__nodeMix(group.nodes, 0.4, 0, 90)
+            if BlenderMaterials.usePrincipledShader:
+                node_principled  = BlenderMaterials.__nodePrincipled(group.nodes, 0.0, 0.0, 0.8, 0.2, 0.0, 0.03, 1.45, 0.0, 310, 95)
 
-            # link nodes together
-            group.links.new(node_input.outputs['Color'], node_glossy.inputs['Color'])
-            group.links.new(node_input.outputs['Color'], node_dielectric.inputs['Color'])
-            group.links.new(node_input.outputs['Normal'], node_glossy.inputs['Normal'])
-            group.links.new(node_input.outputs['Normal'], node_dielectric.inputs['Normal'])
-            group.links.new(node_glossy.outputs[0],     node_mix.inputs[1])
-            group.links.new(node_dielectric.outputs[0], node_mix.inputs[2])
-            group.links.new(node_mix.outputs[0],        node_output.inputs[0])
+                group.links.new(node_input.outputs['Color'], node_principled.inputs['Base Color'])
+                group.links.new(node_input.outputs['Normal'], node_principled.inputs['Normal'])
+                group.links.new(node_principled.outputs[0], node_output.inputs['Shader'])
+            else:
+                node_dielectric = BlenderMaterials.__nodeDielectric(group.nodes, 0.05, 0.2, 0.0, 1.46, -242, 0)
+                node_glossy = BlenderMaterials.__nodeGlossy(group.nodes, (1,1,1,1), 0.2, 'BECKMANN', -242, 154)
+                node_mix = BlenderMaterials.__nodeMix(group.nodes, 0.4, 0, 90)
+
+                # link nodes together
+                group.links.new(node_input.outputs['Color'], node_glossy.inputs['Color'])
+                group.links.new(node_input.outputs['Color'], node_dielectric.inputs['Color'])
+                group.links.new(node_input.outputs['Normal'], node_glossy.inputs['Normal'])
+                group.links.new(node_input.outputs['Normal'], node_dielectric.inputs['Normal'])
+                group.links.new(node_glossy.outputs[0],     node_mix.inputs[1])
+                group.links.new(node_dielectric.outputs[0], node_mix.inputs[2])
+                group.links.new(node_mix.outputs[0],        node_output.inputs[0])
 
     # **************************************************************************************
     def __createBlenderLegoGlitterNodeGroup():
@@ -2405,27 +2569,44 @@ class BlenderMaterials:
             group.inputs.new('NodeSocketColor','Glitter Color')
             group.inputs.new('NodeSocketVectorDirection','Normal')
 
-            node_glass   = BlenderMaterials.__nodeGlass(group.nodes, 0.05, 1.46, 'BECKMANN', -242, 154)
-            node_glossy  = BlenderMaterials.__nodeGlossy(group.nodes, (1,1,1,1), 0.05, 'BECKMANN', -242, -23)
-            node_diffuse = BlenderMaterials.__nodeDiffuse(group.nodes, 0.0, -12, -49)
-            node_voronoi = BlenderMaterials.__nodeVoronoi(group.nodes, 100, -232, 310)
-            node_gamma   = BlenderMaterials.__nodeGamma(group.nodes, 50, 0, 200)
-            node_mixOne  = BlenderMaterials.__nodeMix(group.nodes, 0.05, 0, 90)
-            node_mixTwo  = BlenderMaterials.__nodeMix(group.nodes, 0.5, 200, 90)
+            if BlenderMaterials.usePrincipledShader:
+                node_voronoi     = BlenderMaterials.__nodeVoronoi(group.nodes, 100, -222, 310)
+                node_gamma       = BlenderMaterials.__nodeGamma(group.nodes, 50, 0, 200)
+                node_mix         = BlenderMaterials.__nodeMix(group.nodes, 0.05, 210, 90+25)
+                node_principled1 = BlenderMaterials.__nodePrincipled(group.nodes, 0.0, 0.0, 0.0, 0.2, 0.0, 0.03, 1.585, 1.0, 45-270, 340-210)
+                node_principled2 = BlenderMaterials.__nodePrincipled(group.nodes, 0.0, 0.0, 0.0, 0.5, 0.0, 0.03, 1.45, 0.0, 45-270, 340-750)
 
-            # link nodes together
-            group.links.new(node_input.outputs['Color'], node_glass.inputs['Color'])
-            group.links.new(node_input.outputs['Glitter Color'], node_diffuse.inputs['Color'])
-            group.links.new(node_input.outputs['Normal'], node_glass.inputs['Normal'])
-            group.links.new(node_input.outputs['Normal'], node_glossy.inputs['Normal'])
-            group.links.new(node_input.outputs['Normal'], node_diffuse.inputs['Normal'])
-            group.links.new(node_glass.outputs[0],     node_mixOne.inputs[1])
-            group.links.new(node_glossy.outputs[0],    node_mixOne.inputs[2])
-            group.links.new(node_voronoi.outputs[0],   node_gamma.inputs[0])
-            group.links.new(node_gamma.outputs[0],     node_mixTwo.inputs[0])
-            group.links.new(node_mixOne.outputs[0],    node_mixTwo.inputs[1])
-            group.links.new(node_diffuse.outputs[0],   node_mixTwo.inputs[2])
-            group.links.new(node_mixTwo.outputs[0],    node_output.inputs[0])
+                group.links.new(node_input.outputs['Color'], node_principled1.inputs['Base Color'])
+                group.links.new(node_input.outputs['Glitter Color'], node_principled2.inputs['Base Color'])
+                group.links.new(node_input.outputs['Normal'], node_principled1.inputs['Normal'])
+                group.links.new(node_input.outputs['Normal'], node_principled2.inputs['Normal'])
+                group.links.new(node_voronoi.outputs['Color'], node_gamma.inputs['Color'])
+                group.links.new(node_gamma.outputs[0], node_mix.inputs[0])
+                group.links.new(node_principled1.outputs['BSDF'], node_mix.inputs[1])
+                group.links.new(node_principled2.outputs['BSDF'], node_mix.inputs[2])
+                group.links.new(node_mix.outputs[0], node_output.inputs[0])
+            else:
+                node_glass   = BlenderMaterials.__nodeGlass(group.nodes, 0.05, 1.46, 'BECKMANN', -242, 154)
+                node_glossy  = BlenderMaterials.__nodeGlossy(group.nodes, (1,1,1,1), 0.05, 'BECKMANN', -242, -23)
+                node_diffuse = BlenderMaterials.__nodeDiffuse(group.nodes, 0.0, -12, -49)
+                node_voronoi = BlenderMaterials.__nodeVoronoi(group.nodes, 100, -232, 310)
+                node_gamma   = BlenderMaterials.__nodeGamma(group.nodes, 50, 0, 200)
+                node_mixOne  = BlenderMaterials.__nodeMix(group.nodes, 0.05, 0, 90)
+                node_mixTwo  = BlenderMaterials.__nodeMix(group.nodes, 0.5, 200, 90)
+
+                # link nodes together
+                group.links.new(node_input.outputs['Color'], node_glass.inputs['Color'])
+                group.links.new(node_input.outputs['Glitter Color'], node_diffuse.inputs['Color'])
+                group.links.new(node_input.outputs['Normal'], node_glass.inputs['Normal'])
+                group.links.new(node_input.outputs['Normal'], node_glossy.inputs['Normal'])
+                group.links.new(node_input.outputs['Normal'], node_diffuse.inputs['Normal'])
+                group.links.new(node_glass.outputs[0],     node_mixOne.inputs[1])
+                group.links.new(node_glossy.outputs[0],    node_mixOne.inputs[2])
+                group.links.new(node_voronoi.outputs[0],   node_gamma.inputs[0])
+                group.links.new(node_gamma.outputs[0],     node_mixTwo.inputs[0])
+                group.links.new(node_mixOne.outputs[0],    node_mixTwo.inputs[1])
+                group.links.new(node_diffuse.outputs[0],   node_mixTwo.inputs[2])
+                group.links.new(node_mixTwo.outputs[0],    node_output.inputs[0])
 
     # **************************************************************************************
     def __createBlenderLegoSpeckleNodeGroup():
@@ -2439,27 +2620,44 @@ class BlenderMaterials:
             group.inputs.new('NodeSocketColor','Speckle Color')
             group.inputs.new('NodeSocketVectorDirection','Normal')
 
-            node_diffuseOne = BlenderMaterials.__nodeDiffuse(group.nodes, 0.0, -242, 131)
-            node_glossy     = BlenderMaterials.__nodeGlossy(group.nodes, (0.333, 0.333, 0.333, 1.0), 0.2, 'BECKMANN', -242, -23)
-            node_diffuseTwo = BlenderMaterials.__nodeDiffuse(group.nodes, 0.0, -12, -49)
-            node_voronoi    = BlenderMaterials.__nodeVoronoi(group.nodes, 100, -232, 310)
-            node_gamma      = BlenderMaterials.__nodeGamma(group.nodes, 20, 0, 200)
-            node_mixOne     = BlenderMaterials.__nodeMix(group.nodes, 0.2, 0, 90)
-            node_mixTwo     = BlenderMaterials.__nodeMix(group.nodes, 0.5, 200, 90)
+            if BlenderMaterials.usePrincipledShader:
+                node_voronoi     = BlenderMaterials.__nodeVoronoi(group.nodes, 50, -222, 310)
+                node_gamma       = BlenderMaterials.__nodeGamma(group.nodes, 3.5, 0, 200)
+                node_mix         = BlenderMaterials.__nodeMix(group.nodes, 0.05, 210, 90+25)
+                node_principled1 = BlenderMaterials.__nodePrincipled(group.nodes, 0.0, 0.0, 0.0, 0.1, 0.0, 0.03, 1.45, 0.0, 45-270, 340-210)
+                node_principled2 = BlenderMaterials.__nodePrincipled(group.nodes, 0.0, 0.0, 1.0, 0.5, 0.0, 0.03, 1.45, 0.0, 45-270, 340-750)
 
-            # link nodes together
-            group.links.new(node_input.outputs['Color'], node_diffuseOne.inputs['Color'])
-            group.links.new(node_input.outputs['Speckle Color'], node_diffuseTwo.inputs['Color'])
-            group.links.new(node_input.outputs['Normal'], node_diffuseOne.inputs['Normal'])
-            group.links.new(node_input.outputs['Normal'], node_glossy.inputs['Normal'])
-            group.links.new(node_input.outputs['Normal'], node_diffuseTwo.inputs['Normal'])
-            group.links.new(node_voronoi.outputs[0],       node_gamma.inputs[0])
-            group.links.new(node_diffuseOne.outputs[0],    node_mixOne.inputs[1])
-            group.links.new(node_glossy.outputs[0],        node_mixOne.inputs[2])
-            group.links.new(node_gamma.outputs[0],         node_mixTwo.inputs[0])
-            group.links.new(node_mixOne.outputs[0],        node_mixTwo.inputs[1])
-            group.links.new(node_diffuseTwo.outputs[0],    node_mixTwo.inputs[2])
-            group.links.new(node_mixTwo.outputs[0],        node_output.inputs[0])
+                group.links.new(node_input.outputs['Color'], node_principled1.inputs['Base Color'])
+                group.links.new(node_input.outputs['Speckle Color'], node_principled2.inputs['Base Color'])
+                group.links.new(node_input.outputs['Normal'], node_principled1.inputs['Normal'])
+                group.links.new(node_input.outputs['Normal'], node_principled2.inputs['Normal'])
+                group.links.new(node_voronoi.outputs['Color'], node_gamma.inputs['Color'])
+                group.links.new(node_gamma.outputs[0], node_mix.inputs[0])
+                group.links.new(node_principled1.outputs['BSDF'], node_mix.inputs[1])
+                group.links.new(node_principled2.outputs['BSDF'], node_mix.inputs[2])
+                group.links.new(node_mix.outputs[0], node_output.inputs[0])
+            else:
+                node_diffuseOne = BlenderMaterials.__nodeDiffuse(group.nodes, 0.0, -242, 131)
+                node_glossy     = BlenderMaterials.__nodeGlossy(group.nodes, (0.333, 0.333, 0.333, 1.0), 0.2, 'BECKMANN', -242, -23)
+                node_diffuseTwo = BlenderMaterials.__nodeDiffuse(group.nodes, 0.0, -12, -49)
+                node_voronoi    = BlenderMaterials.__nodeVoronoi(group.nodes, 100, -232, 310)
+                node_gamma      = BlenderMaterials.__nodeGamma(group.nodes, 20, 0, 200)
+                node_mixOne     = BlenderMaterials.__nodeMix(group.nodes, 0.2, 0, 90)
+                node_mixTwo     = BlenderMaterials.__nodeMix(group.nodes, 0.5, 200, 90)
+
+                # link nodes together
+                group.links.new(node_input.outputs['Color'], node_diffuseOne.inputs['Color'])
+                group.links.new(node_input.outputs['Speckle Color'], node_diffuseTwo.inputs['Color'])
+                group.links.new(node_input.outputs['Normal'], node_diffuseOne.inputs['Normal'])
+                group.links.new(node_input.outputs['Normal'], node_glossy.inputs['Normal'])
+                group.links.new(node_input.outputs['Normal'], node_diffuseTwo.inputs['Normal'])
+                group.links.new(node_voronoi.outputs[0],       node_gamma.inputs[0])
+                group.links.new(node_diffuseOne.outputs[0],    node_mixOne.inputs[1])
+                group.links.new(node_glossy.outputs[0],        node_mixOne.inputs[2])
+                group.links.new(node_gamma.outputs[0],         node_mixTwo.inputs[0])
+                group.links.new(node_mixOne.outputs[0],        node_mixTwo.inputs[1])
+                group.links.new(node_diffuseTwo.outputs[0],    node_mixTwo.inputs[2])
+                group.links.new(node_mixTwo.outputs[0],        node_output.inputs[0])
 
     # **************************************************************************************
     def __createBlenderLegoMilkyWhiteNodeGroup():
@@ -2472,36 +2670,54 @@ class BlenderMaterials:
             group.inputs.new('NodeSocketColor','Color')
             group.inputs.new('NodeSocketVectorDirection','Normal')
 
-            node_diffuse = BlenderMaterials.__nodeDiffuse(group.nodes, 0.0, -242, 90)
-            node_trans   = BlenderMaterials.__nodeTranslucent(group.nodes, -242, -46)
-            node_glossy  = BlenderMaterials.__nodeGlossy(group.nodes, (1,1,1,1), 0.5, 'BECKMANN', -42, -54)
-            node_mixOne  = BlenderMaterials.__nodeMix(group.nodes, 0.4, -35, 90)
-            node_mixTwo  = BlenderMaterials.__nodeMix(group.nodes, 0.2, 175, 90)
+            if BlenderMaterials.usePrincipledShader:
+                node_principled = BlenderMaterials.__nodePrincipled(group.nodes, 1.0, 0.05, 0.0, 0.5, 0.0, 0.03, 1.45, 0.0, 45-270, 340-210)
+                node_translucent = BlenderMaterials.__nodeTranslucent(group.nodes, -225, -382)
+                node_mix = BlenderMaterials.__nodeMix(group.nodes, 0.5, 65, -40)
 
-            # link nodes together
-            group.links.new(node_input.outputs['Color'],  node_diffuse.inputs['Color'])
-            group.links.new(node_input.outputs['Color'],  node_trans.inputs['Color'])
-            group.links.new(node_input.outputs['Color'],  node_glossy.inputs['Color'])
-            group.links.new(node_input.outputs['Normal'], node_diffuse.inputs['Normal'])
-            group.links.new(node_input.outputs['Normal'], node_trans.inputs['Normal'])
-            group.links.new(node_input.outputs['Normal'], node_glossy.inputs['Normal'])
-            group.links.new(node_diffuse.outputs[0],  node_mixOne.inputs[1])
-            group.links.new(node_trans.outputs[0],    node_mixOne.inputs[2])
-            group.links.new(node_mixOne.outputs[0],   node_mixTwo.inputs[1])
-            group.links.new(node_glossy.outputs[0],   node_mixTwo.inputs[2])
-            group.links.new(node_mixTwo.outputs[0],   node_output.inputs[0])
+                group.links.new(node_input.outputs['Color'], node_principled.inputs['Base Color'])
+                group.links.new(node_input.outputs['Color'], node_principled.inputs['Subsurface Color'])
+                group.links.new(node_input.outputs['Normal'], node_principled.inputs['Normal'])
+                group.links.new(node_input.outputs['Normal'], node_translucent.inputs['Normal'])
+                group.links.new(node_principled.outputs[0], node_mix.inputs[1])
+                group.links.new(node_translucent.outputs[0], node_mix.inputs[2])
+                group.links.new(node_mix.outputs[0], node_output.inputs[0])
+            else:
+                node_diffuse = BlenderMaterials.__nodeDiffuse(group.nodes, 0.0, -242, 90)
+                node_trans   = BlenderMaterials.__nodeTranslucent(group.nodes, -242, -46)
+                node_glossy  = BlenderMaterials.__nodeGlossy(group.nodes, (1,1,1,1), 0.5, 'BECKMANN', -42, -54)
+                node_mixOne  = BlenderMaterials.__nodeMix(group.nodes, 0.4, -35, 90)
+                node_mixTwo  = BlenderMaterials.__nodeMix(group.nodes, 0.2, 175, 90)
+
+                # link nodes together
+                group.links.new(node_input.outputs['Color'],  node_diffuse.inputs['Color'])
+                group.links.new(node_input.outputs['Color'],  node_trans.inputs['Color'])
+                group.links.new(node_input.outputs['Color'],  node_glossy.inputs['Color'])
+                group.links.new(node_input.outputs['Normal'], node_diffuse.inputs['Normal'])
+                group.links.new(node_input.outputs['Normal'], node_trans.inputs['Normal'])
+                group.links.new(node_input.outputs['Normal'], node_glossy.inputs['Normal'])
+                group.links.new(node_diffuse.outputs[0],  node_mixOne.inputs[1])
+                group.links.new(node_trans.outputs[0],    node_mixOne.inputs[2])
+                group.links.new(node_mixOne.outputs[0],   node_mixTwo.inputs[1])
+                group.links.new(node_glossy.outputs[0],   node_mixTwo.inputs[2])
+                group.links.new(node_mixTwo.outputs[0],   node_output.inputs[0])
 
     # **************************************************************************************
     def createBlenderNodeGroups():
+        BlenderMaterials.usePrincipledShader = BlenderMaterials.__hasPrincipledShader and Options.usePrincipledShaderWhenAvailable
+
         BlenderMaterials.__createBlenderDistanceToCenterNodeGroup()
         BlenderMaterials.__createBlenderVectorElementPowerNodeGroup()
         BlenderMaterials.__createBlenderConvertToNormalsNodeGroup()
         BlenderMaterials.__createBlenderConcaveWallsNodeGroup()
-        # Based on ideas from https://www.youtube.com/watch?v=V3wghbZ-Vh4
+
+        # Originally based on ideas from https://www.youtube.com/watch?v=V3wghbZ-Vh4
         # "Create your own PBR Material [Fixed!]" by BlenderGuru
+        # Updated with Principled Shader, if available
         BlenderMaterials.__createBlenderFresnelNodeGroup()
         BlenderMaterials.__createBlenderReflectionNodeGroup()
         BlenderMaterials.__createBlenderDielectricNodeGroup()
+        
         BlenderMaterials.__createBlenderLegoStandardNodeGroup()
         BlenderMaterials.__createBlenderLegoTransparentNodeGroup()
         BlenderMaterials.__createBlenderLegoRubberNodeGroup()
@@ -2819,7 +3035,7 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
         if Options.addBevelModifier:
             if mesh:
                 bevelModifier = ob.modifiers.new("Bevel", type='BEVEL')
-                bevelModifier.width = 0.4 * Options.scale
+                bevelModifier.width = 0.5 * Options.scale
                 bevelModifier.segments = 4
                 bevelModifier.profile = 0.5
                 bevelModifier.limit_method = 'WEIGHT'
