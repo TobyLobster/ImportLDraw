@@ -179,7 +179,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
     addGaps = BoolProperty(
         name="Add space between each part:",
         description="Add a small space between each part",
-        default=prefs.get("gaps", True)
+        default=prefs.get("gaps", False)
     )
 
     gapsSize = FloatProperty(
@@ -196,13 +196,13 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
 
     importCameras = BoolProperty(
         name="Import cameras",
-        description="Import camera definitions (LeoCAD)",
+        description="Import camera definitions (from models authored in LeoCAD)",
         default=prefs.get("importCameras", True)
     )
 
     linkParts = BoolProperty(
         name="Link identical parts",
-        description="Identical parts (same type and colour) share the same mesh",
+        description="Identical parts (of the same type and colour) share the same mesh",
         default=prefs.get("linkParts", True)
     )
 
@@ -255,7 +255,31 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
     bevelEdges = BoolProperty(
         name="Bevel edges",
         description="Adds a Bevel modifier for rounding off sharp edges.",
-        default=prefs.get("bevelEdges", False)
+        default=prefs.get("bevelEdges", True)
+    )
+    
+    bevelWidth = FloatProperty(
+        name="Bevel Width",
+        description="Width of the bevelled edges",
+        default=prefs.get("bevelWidth", 0.5)
+    )
+
+    addEnvironment = BoolProperty(
+        name="Add Environment",
+        description="Adds a ground plane and environment texture (for realistic look only).",
+        default=prefs.get("addEnvironment", True)
+    )
+    
+    positionCamera = BoolProperty(
+        name="Position the camera",
+        description="Position the camera to show the whole model.",
+        default=prefs.get("positionCamera", True)
+    )
+
+    cameraBorderPercentage = FloatProperty(
+        name="Camera Border %",
+        description="When positioning the camera, include a (percentage) border around the model in the render.",
+        default=prefs.get("cameraBorderPercentage", 5.0)
     )
 
     def draw(self, context):
@@ -268,10 +292,15 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         box.prop(self, "ldrawPath")
         box.prop(self, "importScale")
         box.prop(self, "look", expand=True)
+        box.prop(self, "addEnvironment")
+        box.prop(self, "positionCamera")
+        box.prop(self, "cameraBorderPercentage")
+
         box.prop(self, "colourScheme", expand=True)
         box.prop(self, "resPrims", expand=True)
         box.prop(self, "smoothParts")
         box.prop(self, "bevelEdges")
+        box.prop(self, "bevelWidth")
         box.prop(self, "addGaps")
         box.prop(self, "gapsSize")
         box.prop(self, "curvedWalls")
@@ -289,9 +318,6 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         box.label("Resolve Ambiguous Normals:", icon='EDIT')
         box.prop(self, "resolveNormals", expand=True)
 
-        #box.label("Parts", icon='MOD_BUILD')
-        #box.label("Additional Options", icon='PREFERENCES')
-
     def execute(self, context):
         """Start the import process."""
 
@@ -301,6 +327,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("resolution",            self.resPrims)
         ImportLDrawOps.prefs.set("smoothShading",         self.smoothParts)
         ImportLDrawOps.prefs.set("bevelEdges",            self.bevelEdges)
+        ImportLDrawOps.prefs.set("bevelWidth",            self.bevelWidth)
         ImportLDrawOps.prefs.set("useLook",               self.look)
         ImportLDrawOps.prefs.set("useColourScheme",       self.colourScheme)
         ImportLDrawOps.prefs.set("gaps",                  self.addGaps)
@@ -315,6 +342,9 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("useLogoStuds",          self.useLogoStuds)
         ImportLDrawOps.prefs.set("instanceStuds",         self.instanceStuds)
         ImportLDrawOps.prefs.set("resolveNormals",        self.resolveNormals)
+        ImportLDrawOps.prefs.set("addEnvironment",        self.addEnvironment)
+        ImportLDrawOps.prefs.set("positionCamera",        self.positionCamera)
+        ImportLDrawOps.prefs.set("cameraBorderPercentage",self.cameraBorderPercentage)
         ImportLDrawOps.prefs.save()
 
         # Set import options and import
@@ -345,7 +375,12 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.Options.resolveAmbiguousNormals = self.resolveNormals
         loadldraw.Options.overwriteExistingMaterials = False
         loadldraw.Options.overwriteExistingMeshes    = False
-        loadldraw.Options.addBevelModifier           = self.bevelEdges
+        loadldraw.Options.addBevelModifier           = self.bevelEdges and not loadldraw.Options.instructionsLook
+        loadldraw.Options.bevelWidth                 = self.bevelWidth
+        loadldraw.Options.addWorldEnvironmentTexture = self.addEnvironment
+        loadldraw.Options.addGroundPlane             = self.addEnvironment
+        loadldraw.Options.positionCamera             = self.positionCamera
+        loadldraw.Options.cameraBorderPercent        = self.cameraBorderPercentage / 100.0
 
         loadldraw.loadFromFile(self, self.filepath)
         return {'FINISHED'}
