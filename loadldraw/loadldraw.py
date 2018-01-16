@@ -788,18 +788,26 @@ class FileSystem:
 class CachedFiles:
     """Cached dictionary of LDrawFile objects keyed by filename"""
 
-    __cache = {}        # Dictionary
+    __cache = {}        # Dictionary of exact filenames as keys, and file contents as values
+    __lowercache = {}   # Dictionary of lowercase filenames as keys, and file contents as values
 
     def getCached(key):
+        # Look for an exact match in the cache first
         if key in CachedFiles.__cache:
             return CachedFiles.__cache[key]
+            
+        # Look for a case-insensitive match next
+        if key.lower() in CachedFiles.__lowercache:
+            return CachedFiles.__lowercache[key.lower()]
         return None
 
     def addToCache(key, value):
         CachedFiles.__cache[key] = value
+        CachedFiles.__lowercache[key.lower()] = value
 
     def clearCache():
         CachedFiles.__cache = {}
+        CachedFiles.__lowercache = {}
 
 
 # **************************************************************************************
@@ -810,15 +818,15 @@ class CachedGeometry:
     __cache = {}        # Dictionary
 
     def getCached(key):
-        if key in CachedFiles.__cache:
-            return CachedFiles.__cache[key]
+        if key in CachedGeometry.__cache:
+            return CachedGeometry.__cache[key]
         return None
 
     def addToCache(key, value):
-        CachedFiles.__cache[key] = value
+        CachedGeometry.__cache[key] = value
 
     def clearCache():
-        CachedFiles.__cache = {}
+        CachedGeometry.__cache = {}
 
 
 # **************************************************************************************
