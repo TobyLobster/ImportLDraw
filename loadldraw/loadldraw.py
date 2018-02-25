@@ -2950,6 +2950,85 @@ def addNodeToParentWithGroups(parentObject, groupNames, newObject):
     newObject.parent = parentObject
     globalObjectsToAdd.append(newObject)
 
+partsHierarchy = {
+        # FIXME: understand why y and z coordinates must be of opposite sign than what was reported by LeoCAD
+#  parent: ([ list of attach slots ], [ list of possible children ])
+    '973': ([(0, 0, 0), (0, 0, 6), (-15.5927, 0, 8.8573), (15.5927, 0, 8.8573), (0, 0, -24)], ['975', '976', '3626', '3818', '3819', '4498', '4524']),
+    '975': ([(-22, 16.1213, 20.8787)], ['977', '3820']),
+    '976': ([(22, 16.1213, 20.8787)], ['977', '3820']),
+    '3626': ([(0, 0, 0)], ['3842', '3844', '3896', '4503']),
+    '3818': ([(-5, 9.8787, 18.8787)], ['977', '3820']),
+    '3819': ([(5, 9.8787, 18.8787)], ['977', '3820']),
+}
+
+def setupImplicitParents():
+    bpy.context.scene.update()
+
+    interestingParts = set([])
+    for parent, childrenData in partsHierarchy.items():
+        interestingParts.add(parent)
+        interestingParts.update(childrenData[1])
+    print('Interesting parts: %s' % (interestingParts,))
+
+    tolerance = Options.scale * 5 # in LDraw units
+    squaredTolerance = tolerance * tolerance
+
+    meshParts = {}
+    parentableMeshes = {}
+    for name in bpy.data.meshes.keys():
+        print("Object name: %s" % (name,))
+        if not name.startswith('Mesh_'): continue
+        # skip initial "Mesh_"
+        partName = ''
+        for c in name[5:]:
+            if c.isdigit():
+                partName += c
+            else:
+                break
+        if partName in interestingParts:
+            meshParts[name] = partName
+            print("part name: %s" % (partName,))
+            children = partsHierarchy.get(partName)
+            if children:
+                parentableMeshes[name] = children
+
+    # Now, iterate through our objects
+    interestingObjects = []
+    for obj in bpy.data.objects:
+        if obj.type != 'MESH': continue
+        meshName = obj.data.name
+        if meshName in meshParts:
+            interestingObjects.append(obj)
+
+    for obj in interestingObjects:
+        meshName = obj.data.name
+        childrenData = parentableMeshes.get(meshName)
+        if not childrenData: continue
+        parentLocation = obj.matrix_world * mathutils.Vector((0, 0, 0))
+        parentMatrixInverted = obj.matrix_world.inverted()
+        print("Looking for children of %s (at %s)" % (obj.name, parentLocation))
+        print(" Squared tolerance: %s" % (squaredTolerance,))
+        slotLocations = []
+        for slot in childrenData[0]:
+            loc = obj.matrix_world * Math.rotationMatrix * (mathutils.Vector(slot) * Options.scale)
+            slotLocations.append(loc)
+        print(" Slot locations: %s" % (slotLocations,))
+
+        for childObj in interestingObjects:
+            childMeshName = childObj.data.name
+            childPartName = meshParts[childMeshName]
+            childLocation = childObj.matrix_world.to_translation()
+            if childPartName not in childrenData[1]: continue
+            print("  Found possible child %s" % (childObj.name,))
+            for slotLocation in slotLocations:
+                diff = slotLocation - childLocation
+                squaredDistance = diff.length_squared
+                print("  location: %s (squared distance: %s)" % (childLocation, squaredDistance))
+                if squaredDistance <= squaredTolerance:
+                    print("    Got it!")
+                    childObj.parent = obj
+                    childObj.matrix_local = parentMatrixInverted * childObj.matrix_world
+
 # **************************************************************************************
 def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options.defaultColour, blenderParentTransform=Math.identityMatrix, localToWorldSpaceMatrix=Math.identityMatrix, blenderNodeParent=None):
     """
@@ -3844,6 +3923,8 @@ def loadFromFile(context, filename, isFullFilepath=True):
                     error = iterateCameraPosition(camera, render, vcentre, True)
                     if (error < 0.001):
                         break
+
+    setupImplicitParents()
 
     debugPrint("Load Done")
     return rootOb
