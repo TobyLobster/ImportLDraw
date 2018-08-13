@@ -306,6 +306,7 @@ class Configure:
 
         debugPrint("The LDraw Parts Library path to be used is: {0}".format(Configure.ldrawInstallDirectory))
         Configure.__setSearchPaths()
+        
 
     def __init__(self):
         Configure.setLDrawDirectory()
@@ -1287,7 +1288,7 @@ class BlenderMaterials:
             links.new(input.outputs[1], output.inputs[1])
 
 
-    def __createNodeBasedMaterial(blenderName, col):
+    def __createNodeBasedMaterial(blenderName, col, isSlopeMaterial=False):
         """Get Cycles Material Values."""
 
         # Reuse current material if it exists, otherwise create a new material
@@ -1350,8 +1351,11 @@ class BlenderMaterials:
             else:
                 BlenderMaterials.__createCyclesBasic(nodes, links, colour, col["alpha"])
 
-            if Options.curvedWalls and not Options.instructionsLook:
+            if isSlopeMaterial and not Options.instructionsLook:
+                BlenderMaterials.__createCyclesSlopeTexture(nodes, links, 0.3)
+            elif Options.curvedWalls and not Options.instructionsLook:
                 BlenderMaterials.__createCyclesConcaveWalls(nodes, links, 0.2)
+
 
             material["Lego.isTransparent"] = isTransparent
             return material
@@ -1363,6 +1367,13 @@ class BlenderMaterials:
     def __nodeConcaveWalls(nodes, strength, x, y):
         node = nodes.new('ShaderNodeGroup')
         node.node_tree = bpy.data.node_groups[BlenderMaterials.__getGroupName('Concave Walls')]
+        node.location = x, y
+        node.inputs['Strength'].default_value = strength
+        return node
+        
+    def __nodeSlopeTexture(nodes, strength, x, y):
+        node = nodes.new('ShaderNodeGroup')
+        node.node_tree = bpy.data.node_groups[BlenderMaterials.__getGroupName('Slope Texture')]
         node.location = x, y
         node.inputs['Strength'].default_value = strength
         return node
@@ -1551,6 +1562,12 @@ class BlenderMaterials:
         node = BlenderMaterials.__nodeConcaveWalls(nodes, strength, -200, 5)
         out = nodes['Group']
         links.new(node.outputs['Normal'], out.inputs['Normal'])
+        
+    def __createCyclesSlopeTexture(nodes, links, strength):
+        """Slope face normals for Cycles render engine"""
+        node = BlenderMaterials.__nodeSlopeTexture(nodes, strength, -200, 5)
+        out = nodes['Group']
+        links.new(node.outputs['Normal'], out.inputs['Normal'])
 
     def __createCyclesBasic(nodes, links, diffColour, alpha):
         """Basic Material for Cycles render engine."""
@@ -1656,7 +1673,13 @@ class BlenderMaterials:
             "material":     "BASIC"
         }
 
-    def getMaterial(colourName):
+    def getMaterial(colourName, isSlopeMaterial):
+        if isSlopeMaterial:
+            pureColourName = colourName
+            colourName = colourName + "_s"
+        else:
+            pureColourName = colourName
+    
         # If it's already in the cache, use that
         if (colourName in BlenderMaterials.__material_list):
             result = BlenderMaterials.__material_list[colourName]
@@ -1665,10 +1688,10 @@ class BlenderMaterials:
         # Create a name for the material based on the colour
         if Options.instructionsLook:
             blenderName = "MatInst_{0}".format(colourName)
-        elif Options.curvedWalls:
+        elif Options.curvedWalls and not isSlopeMaterial:
             blenderName = "Material_{0}_c".format(colourName)
         else:
-            blenderName = "Material_{0}".format(colourName)    
+            blenderName = "Material_{0}".format(colourName)
 
         # If the name already exists in Blender, use that
         if Options.overwriteExistingMaterials is False:
@@ -1676,8 +1699,8 @@ class BlenderMaterials:
                 return bpy.data.materials[blenderName]
 
         # Create new material
-        col = BlenderMaterials.__getColourData(colourName)
-        material = BlenderMaterials.__createNodeBasedMaterial(blenderName, col)
+        col = BlenderMaterials.__getColourData(pureColourName)
+        material = BlenderMaterials.__createNodeBasedMaterial(blenderName, col, isSlopeMaterial)
 
         if material is None:
             printWarningOnce("Could not create material for blenderName {0}".format(blenderName))
@@ -1878,6 +1901,38 @@ class BlenderMaterials:
             group.links.new(node_input.outputs['Strength'], node_convert_to_normals.inputs['Strength'])
             group.links.new(node_input.outputs['Normal'], node_convert_to_normals.inputs['Normal'])
             group.links.new(node_convert_to_normals.outputs['Normal'], node_output.inputs['Normal'])
+
+    # **************************************************************************************
+    def __createBlenderSlopeTextureNodeGroup():
+        if bpy.data.node_groups.get('Slope Texture') is None:
+            debugPrint("createBlenderSlopeTextureNodeGroup #create")
+            # create a group
+            group, node_input, node_output = BlenderMaterials.__createGroup('Slope Texture', -530, 0, 300, 0, False)
+            group.inputs.new('NodeSocketFloat', 'Strength')
+            group.inputs.new('NodeSocketVectorDirection', 'Normal')
+            group.outputs.new('NodeSocketVectorDirection', 'Normal')
+
+            # create nodes
+            node_texture_coordinate = group.nodes.new('ShaderNodeTexCoord')
+            node_texture_coordinate.location = -300, 240
+
+            node_voronoi = group.nodes.new('ShaderNodeTexVoronoi')
+            node_voronoi.coloring = 'INTENSITY'
+            node_voronoi.inputs['Scale'].default_value = 3.0/Options.scale
+            node_voronoi.location = -100, 155
+
+            node_bump = group.nodes.new('ShaderNodeBump')
+            node_bump.invert = True
+            node_bump.inputs['Strength'].default_value = 0.3
+            node_bump.inputs['Distance'].default_value = 0.04
+            node_bump.location = 90, 50
+
+            # link nodes together
+            group.links.new(node_texture_coordinate.outputs['Object'], node_voronoi.inputs['Vector'])
+            group.links.new(node_voronoi.outputs['Fac'], node_bump.inputs['Height'])
+            group.links.new(node_input.outputs['Strength'], node_bump.inputs['Strength'])
+            group.links.new(node_input.outputs['Normal'], node_bump.inputs['Normal'])
+            group.links.new(node_bump.outputs['Normal'], node_output.inputs['Normal'])        
 
     # **************************************************************************************
     def __createBlenderFresnelNodeGroup():
@@ -2308,6 +2363,7 @@ class BlenderMaterials:
         BlenderMaterials.__createBlenderVectorElementPowerNodeGroup()
         BlenderMaterials.__createBlenderConvertToNormalsNodeGroup()
         BlenderMaterials.__createBlenderConcaveWallsNodeGroup()
+        BlenderMaterials.__createBlenderSlopeTextureNodeGroup()
         # Based on ideas from https://www.youtube.com/watch?v=V3wghbZ-Vh4
         # "Create your own PBR Material [Fixed!]" by BlenderGuru
         BlenderMaterials.__createBlenderFresnelNodeGroup()
@@ -2428,6 +2484,73 @@ def addNodeToParentWithGroups(parentObject, groupNames, newObject):
     globalObjectsToAdd.append(newObject)
 
 # **************************************************************************************
+def isSlopeFace(partName, faceVertices):
+    """
+    Checks whether a given face of a certain part should receive a grainy slope material.
+    """
+
+    # Dictionary with as keys the part numbers (without any extension for decorations)
+    # of pieces which have grainy slopes and as items a set containing the cotangenses
+    # of those slopes projected on the x or z axis. Use tuples to represent a range
+    # within which the cotangens has to lie if it's too difficult to define the exact
+    # values for all faces
+    slopeBricks = {'3049':{1}, '3048':{1}, '15571':{1}, '3040':{1}, '3044':{1}, \
+                   '3665':{1}, '28192':{1}, '3039':{1}, '3043':{1}, '3046':{1}, \
+                   '962':{1}, '3045':{1}, '13548':{1}, '3660':{1}, '3676':{1}, \
+                   '3038':{1}, '3042':{1}, '3135':{1}, '3037':{1}, '3041':{1}, \
+                   '4445':{1}, '18759':{1}, '2341':{1}, '4861':{1,1/2}, '4871':{1}, \
+                   '30390':{1}, '30182':{1}, '4854':{1}, '72454':{1}, '4857':{1}, \
+                   '52501':{1}, '22889':{1}, '32083':{1}, '30183':{1}, '60219':{1}, \
+                   '30283':{1}, '30180':{1}, '3300':{1/2}, '3299':{1/2}, '4286':{1/2}, \
+                   '4287':{1/2}, '3298':{1/2}, '4089':{1/2}, '3747':{21/40}, '4161':{1/2}, \
+                   '99301':{1/2}, '3675':{1/2}, '3297':{1/2}, '4509':{1/2}, \
+                   '13269':{1,1/2}, '2876':{1,1/2}, '47759':{1,3/5}, '30382':{1,1/5}, \
+                   '4858':{1/3}, '6069':{1,1/3}, '4885':{1,1/3}, '93348':{1/3}, \
+                   '6153':{1/2}, '4856':{1/3}, '43710':{1,1/3}, '43711':{1,1/3}, \
+                   '60477':{1/3}, '30363':{1/3}, '43708':{1/3}, '30249':{29/20}, \
+                   '60481':{11/5}, '3678':{11/5}, '30373':{11/5}, '2449':{17/5}, \
+                   '4460':{17/5}, '3688':{11/3}, '3685':{17/5}, '92946':{1}, \
+                   '22390':{(1,1/2)}, '22391':{(1,1/2)}}
+    # Dictionary with as keys the part numbers (without any extensions for decorations)
+    # of the pieces in slopeBricks for which the default origin does not lie at the
+    # outside of the part. The values are the coordinates of an appropriate origin
+    # expressed in LDraw units
+    partCenterOverride = {'3049':[0,24,40], '3048':[0,24,0], '15571':[0,24,0], \
+                          '962':[0,24,0], '6069':[0,24,0], '60477':[0,24,0], \
+                          '30363':[0,24,0]}
+
+    # Step 1: is it a brick which has a slope material?
+    partNumber = re.findall(r'\D*\d+', partName)[0]
+    if partNumber not in slopeBricks.keys():
+        return False
+
+    # Step 2: does the face point outwards?
+    partCenter = mathutils.Vector([0,0,0])
+    if partNumber in partCenterOverride.keys():
+         partCenter = Math.scaleMatrix*mathutils.Vector(partCenterOverride[partNumber])
+
+    faceCenter = mathutils.Vector([0,0,0])
+    for v in faceVertices:
+        faceCenter += v/len(faceVertices)
+
+    faceNormal = (faceVertices[1] - faceVertices[0]).cross(faceVertices[2]-faceVertices[0])
+    if faceNormal.dot(faceCenter-partCenter) < 0:
+        return False
+
+    # Step 3: does the face make the right angle with the horizontal plane?
+    slopeCotans = slopeBricks[partNumber]
+    slopeCotans = {(c,) if type(c) is not tuple else c for c in slopeCotans}
+    margin = 0.001 # to compensate for rounding errors
+
+    if faceNormal.y == 0:
+        return False
+    elif True not in {min(c)-margin <= abs(faceNormal.x/faceNormal.y) <= max(c)+margin for c in slopeCotans}:
+        if True not in {min(c)-margin <= abs(faceNormal.z/faceNormal.y) <= max(c)+margin for c in slopeCotans}:
+            return False
+
+    return True
+
+# **************************************************************************************
 def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options.defaultColour, blenderParentTransform=Math.identityMatrix, localToWorldSpaceMatrix=Math.identityMatrix, blenderNodeParent=None):
     """
     Creates a Blender Object for the node given and (recursively) for all it's children as required.
@@ -2475,7 +2598,11 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
                     assert len(geometry.faces) == len(geometry.faceColours)
 
                     for i, f in enumerate(mesh.polygons):
-                        material = BlenderMaterials.getMaterial(geometry.faceColours[i])
+                        if isSlopeFace(name, [geometry.points[j] for j in geometry.faces[i]]):
+                            material = BlenderMaterials.getMaterial(geometry.faceColours[i], True)
+                        else:
+                            material = BlenderMaterials.getMaterial(geometry.faceColours[i], False)
+
                         if material is not None:
                             if mesh.materials.get(material.name) is None:
                                 mesh.materials.append(material)
@@ -2503,7 +2630,7 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
         ob["Lego.isTransparent"] = False
         if mesh is not None:
             for i, f in enumerate(mesh.polygons):
-                material = BlenderMaterials.getMaterial(geometry.faceColours[i])
+                material = BlenderMaterials.getMaterial(geometry.faceColours[i], False)
                 if material is not None:
                     if "Lego.isTransparent" in material:
                         if material["Lego.isTransparent"]:
