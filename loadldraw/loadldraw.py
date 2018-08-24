@@ -138,6 +138,110 @@ globalWeldDistance = 0.0005
 globalPoints = []
 
 # **************************************************************************************
+# Dictionary with as keys the part numbers (without any extension for decorations)
+# of pieces that have grainy slopes, and as values a set containing the angles (in 
+# degrees) of the face's normal to the horizontal plane. Use a tuple to represent a 
+# range within which the angle must lie.
+globalSlopeBricks = {
+    '962':{45}, 
+    '2341':{-45}, 
+    '2449':{-16}, 
+    '2875':{45}, 
+    '2876':{(40, 63)}, 
+    '3037':{45}, 
+    '3038':{45}, 
+    '3039':{45}, 
+    '3040':{45}, 
+    '3041':{45}, 
+    '3042':{45}, 
+    '3043':{45}, 
+    '3044':{45}, 
+    '3045':{45}, 
+    '3046':{45}, 
+    '3048':{45}, 
+    '3049':{45}, 
+    '3135':{45}, 
+    '3297':{63}, 
+    '3298':{63}, 
+    '3299':{63}, 
+    '3300':{63}, 
+    '3660':{-45}, 
+    '3665':{-45}, 
+    '3675':{63}, 
+    '3676':{-45}, 
+    '3678':{24}, 
+    '3684':{15}, 
+    '3685':{16}, 
+    '3688':{15}, 
+    '3747':{-63}, 
+    '4089':{-63}, 
+    '4161':{63}, 
+    '4286':{63}, 
+    '4287':{-63}, 
+    '4445':{45}, 
+    '4460':{16}, 
+    '4509':{63}, 
+    '4854':{-45}, 
+    '4856':{(-60, -70), -45}, 
+    '4857':{45}, 
+    '4858':{72}, 
+    '4861':{45, 63}, 
+    '4871':{-45}, 
+    '4885':{72}, 
+    '6069':{72, 45}, 
+    '6153':{(60, 70), (26, 34)}, 
+    '6227':{45}, 
+    '6270':{45}, 
+    '13269':{(40, 63)}, 
+    '13548':{45}, 
+    '15571':{45}, 
+    '18759':{-45}, 
+    '22390':{(40, 55)}, 
+    '22391':{(40, 55)}, 
+    '22889':{-45}, 
+    '28192':{45}, 
+    '30180':{47}, 
+    '30182':{45}, 
+    '30183':{-45}, 
+    '30249':{35}, 
+    '30283':{-45}, 
+    '30363':{72}, 
+    '30373':{-24}, 
+    '30382':{11, 45}, 
+    '30390':{-45}, 
+    '30499':{16}, 
+    '32083':{45}, 
+    '43708':{72}, 
+    '43710':{72, 45}, 
+    '43711':{72, 45}, 
+    '47759':{(40, 63)}, 
+    '52501':{-45}, 
+    '60219':{-45}, 
+    '60477':{72}, 
+    '60481':{24}, 
+    '63341':{45}, 
+    '72454':{-45}, 
+    '92946':{45}, 
+    '93348':{72}, 
+    '95188':{65}, 
+    '99301':{63}, 
+    '303923':{45}, 
+    '303926':{45}, 
+    '304826':{45}, 
+    '329826':{64}, 
+    '374726':{-64}, 
+    '428621':{64}, 
+    '4162628':{17}, 
+    '4195004':{45}, 
+}
+
+# Create a regular dictionary of parts with ranges of angles to check
+margin = 5 # Allow 5 degrees either way to compensate for measuring inaccuracies
+globalSlopeAngles = {}
+for part in globalSlopeBricks:
+    globalSlopeAngles[part] = {(c-margin, c+margin) if type(c) is not tuple else (min(c)-margin,max(c)+margin) for c in globalSlopeBricks[part]}
+
+# **************************************************************************************
 def internalPrint(message):
     """Debug print with identification timestamp."""
 
@@ -184,11 +288,11 @@ def printError(message):
 # **************************************************************************************
 class Math:
     identityMatrix = mathutils.Matrix((
-            (1.0, 0.0, 0.0, 0.0),
-            (0.0, 1.0, 0.0, 0.0),
-            (0.0, 0.0, 1.0, 0.0),
-            (0.0, 0.0, 0.0, 1.0)
-        ))
+        (1.0, 0.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0, 0.0),
+        (0.0, 0.0, 1.0, 0.0),
+        (0.0, 0.0, 0.0, 1.0)
+    ))
     rotationMatrix = mathutils.Matrix.Rotation(math.radians(-90), 4, 'X')
     reflectionMatrix = mathutils.Matrix((
         (1.0, 0.0, 0.0, 0.0),
@@ -1592,7 +1696,7 @@ class BlenderMaterials:
                 BlenderMaterials.__createCyclesBasic(nodes, links, colour, col["alpha"], col["name"])
 
             if isSlopeMaterial and not Options.instructionsLook:
-                BlenderMaterials.__createCyclesSlopeTexture(nodes, links, 0.3)
+                BlenderMaterials.__createCyclesSlopeTexture(nodes, links, 0.6)
             elif Options.curvedWalls and not Options.instructionsLook:
                 BlenderMaterials.__createCyclesConcaveWalls(nodes, links, 0.2)
 
@@ -1845,10 +1949,10 @@ class BlenderMaterials:
         node.location = x, y
         return node
 
-    def __nodeVoronoi(nodes, scale, x, y):
+    def __nodeVoronoi(nodes, scale, x, y, colouring = 'CELLS'):
         node = nodes.new('ShaderNodeTexVoronoi')
         node.location = x, y
-        node.coloring = 'CELLS'
+        node.coloring = colouring
         node.inputs['Scale'].default_value = scale
         return node
 
@@ -2218,19 +2322,10 @@ class BlenderMaterials:
             group.outputs.new('NodeSocketVectorDirection', 'Normal')
 
             # create nodes
-            node_texture_coordinate = group.nodes.new('ShaderNodeTexCoord')
-            node_texture_coordinate.location = -300, 240
-
-            node_voronoi = group.nodes.new('ShaderNodeTexVoronoi')
-            node_voronoi.coloring = 'INTENSITY'
-            node_voronoi.inputs['Scale'].default_value = 3.0/Options.scale
-            node_voronoi.location = -100, 155
-
-            node_bump = group.nodes.new('ShaderNodeBump')
+            node_texture_coordinate = BlenderMaterials.__nodeTexCoord(group.nodes, -300, 240)
+            node_voronoi = BlenderMaterials.__nodeVoronoi(group.nodes, 3.0/Options.scale, -100, 155, 'INTENSITY')
+            node_bump = BlenderMaterials.__nodeBumpShader(group.nodes, 0.3, 0.08, 90, 50)
             node_bump.invert = True
-            node_bump.inputs['Strength'].default_value = 0.3
-            node_bump.inputs['Distance'].default_value = 0.04
-            node_bump.location = 90, 50
 
             # link nodes together
             group.links.new(node_texture_coordinate.outputs['Object'], node_voronoi.inputs['Vector'])
@@ -3003,74 +3098,69 @@ def addNodeToParentWithGroups(parentObject, groupNames, newObject):
     globalObjectsToAdd.append(newObject)
 
 # **************************************************************************************
+def isSlopePart(partName):
+    """
+    Checks whether a given part should receive a grainy slope material.
+    """
+
+    global globalSlopeAngles
+
+    # Is it a part which has a sloped face?
+    partNumber = re.findall(r'\D*\d+', partName)[0]
+    if partNumber in globalSlopeAngles.keys():
+        return True
+
+    return False
+
+# **************************************************************************************
 def isSlopeFace(partName, faceVertices):
     """
     Checks whether a given face of a certain part should receive a grainy slope material.
     """
+    
+    global globalSlopeAngles
+    global globalPartCenterOverride
 
-    # Dictionary with as keys the part numbers (without any extension for decorations)
-    # of pieces which have grainy slopes and as items a set containing the cotangenses
-    # of those slopes projected on the x or z axis. Use tuples to represent a range
-    # within which the cotangens has to lie if it's too difficult to define the exact
-    # values for all faces
-    slopeBricks = {'3049':{1}, '3048':{1}, '15571':{1}, '3040':{1}, '3044':{1}, \
-                   '3665':{1}, '28192':{1}, '3039':{1}, '3043':{1}, '3046':{1}, \
-                   '962':{1}, '3045':{1}, '13548':{1}, '3660':{1}, '3676':{1}, \
-                   '3038':{1}, '3042':{1}, '3135':{1}, '3037':{1}, '3041':{1}, \
-                   '4445':{1}, '18759':{1}, '2341':{1}, '4861':{1,1/2}, '4871':{1}, \
-                   '30390':{1}, '30182':{1}, '4854':{1}, '72454':{1}, '4857':{1}, \
-                   '52501':{1}, '22889':{1}, '32083':{1}, '30183':{1}, '60219':{1}, \
-                   '30283':{1}, '30180':{1}, '3300':{1/2}, '3299':{1/2}, '4286':{1/2}, \
-                   '4287':{1/2}, '3298':{1/2}, '4089':{1/2}, '3747':{21/40}, '4161':{1/2}, \
-                   '99301':{1/2}, '3675':{1/2}, '3297':{1/2}, '4509':{1/2}, \
-                   '13269':{1,1/2}, '2876':{1,1/2}, '47759':{1,3/5}, '30382':{1,1/5}, \
-                   '4858':{1/3}, '6069':{1,1/3}, '4885':{1,1/3}, '93348':{1/3}, \
-                   '6153':{1/2}, '4856':{1/3}, '43710':{1,1/3}, '43711':{1,1/3}, \
-                   '60477':{1/3}, '30363':{1/3}, '43708':{1/3}, '30249':{29/20}, \
-                   '60481':{11/5}, '3678':{11/5}, '30373':{11/5}, '2449':{17/5}, \
-                   '4460':{17/5}, '3688':{11/3}, '3685':{17/5}, '92946':{1}, \
-                   '22390':{(1,1/2)}, '22391':{(1,1/2)}}
-    # Dictionary with as keys the part numbers (without any extensions for decorations)
-    # of the pieces in slopeBricks for which the default origin does not lie at the
-    # outside of the part. The values are the coordinates of an appropriate origin
-    # expressed in LDraw units
-    partCenterOverride = {'3049':[0,24,40], '3048':[0,24,0], '15571':[0,24,0], \
-                          '962':[0,24,0], '6069':[0,24,0], '60477':[0,24,0], \
-                          '30363':[0,24,0]}
+    # Step 1: is the area of the polygon too small? (e.g. a tiny face of the Lego logo as seen on studs)
+    if len(faceVertices) > 3:
+        # (Twice) the area of a quadrilateral
+        twice_area = ((faceVertices[2] - faceVertices[0]).cross(faceVertices[3]-faceVertices[1])).length
+    else:
+        # (Twice) the area of a triangle
+        twice_area = ((faceVertices[1] - faceVertices[0]).cross(faceVertices[2]-faceVertices[0])).length
 
-    # Step 1: is it a brick which has a slope material?
-    partNumber = re.findall(r'\D*\d+', partName)[0]
-    if partNumber not in slopeBricks.keys():
+    if twice_area < (2.0 * Options.scale * Options.scale):
         return False
 
-    # Step 2: does the face point outwards?
-    partCenter = mathutils.Vector([0,0,0])
-    if partNumber in partCenterOverride.keys():
-         partCenter = Math.scaleMatrix*mathutils.Vector(partCenterOverride[partNumber])
-
-    faceCenter = mathutils.Vector([0,0,0])
-    for v in faceVertices:
-        faceCenter += v/len(faceVertices)
-
+    # Step 2: Calculate angle of face normal to the ground
     faceNormal = (faceVertices[1] - faceVertices[0]).cross(faceVertices[2]-faceVertices[0])
-    if faceNormal.dot(faceCenter-partCenter) < 0:
-        return False
+    faceNormal.normalize()
 
-    # Step 3: does the face make the right angle with the horizontal plane?
-    slopeCotans = slopeBricks[partNumber]
-    slopeCotans = {(c,) if type(c) is not tuple else c for c in slopeCotans}
-    margin = 0.001 # to compensate for rounding errors
+    # Clamp value to range -1 to 1 (ensure we are in the strict range of the acos function, taking account of rounding errors)
+    cosine = min(max(faceNormal.y, -1.0), 1.0)
 
-    if faceNormal.y == 0:
-        return False
-    elif True not in {min(c)-margin <= abs(faceNormal.x/faceNormal.y) <= max(c)+margin for c in slopeCotans}:
-        if True not in {min(c)-margin <= abs(faceNormal.z/faceNormal.y) <= max(c)+margin for c in slopeCotans}:
-            return False
+    # Calculate angle of face normal to the ground (-90 to 90 degrees)
+    angleToGroundDegrees = math.degrees(math.acos(cosine)) - 90
 
-    return True
+    # debugPrint("Angle to ground {0}".format(angleToGroundDegrees))
+    
+    # Step 3: Check angle of normal to ground is within one of the acceptable ranges for this part
+    partNumber = re.findall(r'\D*\d+', partName)[0]
+    slopeAngles = globalSlopeAngles[partNumber]
+
+    if True in { c[0] <= angleToGroundDegrees <= c[1] for c in slopeAngles }:
+        return True
+
+    return False
 
 # **************************************************************************************
-def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options.defaultColour, blenderParentTransform=Math.identityMatrix, localToWorldSpaceMatrix=Math.identityMatrix, blenderNodeParent=None):
+def createBlenderObjectsFromNode(node, 
+                                 localMatrix, 
+                                 name, 
+                                 realColourName=Options.defaultColour, 
+                                 blenderParentTransform=Math.identityMatrix, 
+                                 localToWorldSpaceMatrix=Math.identityMatrix, 
+                                 blenderNodeParent=None):
     """
     Creates a Blender Object for the node given and (recursively) for all it's children as required.
     Creates and optimises the mesh for each object too.
@@ -3117,11 +3207,15 @@ def createBlenderObjectsFromNode(node, localMatrix, name, realColourName=Options
                     assert len(mesh.polygons) == len(geometry.faces)
                     assert len(geometry.faces) == len(geometry.faceColours)
 
+                    isSloped = isSlopePart(name)
                     for i, f in enumerate(mesh.polygons):
-                        if isSlopeFace(name, [geometry.points[j] for j in geometry.faces[i]]):
-                            material = BlenderMaterials.getMaterial(geometry.faceColours[i], True)
-                        else:
-                            material = BlenderMaterials.getMaterial(geometry.faceColours[i], False)
+                        isSlopeMaterial = isSloped and isSlopeFace(name, [geometry.points[j] for j in geometry.faces[i]])
+                        # For debugging purposes, we can make sloped faces blue:
+                        # if isSlopeMaterial:
+                        #     faceColor = "1"
+                        # else:
+                        #     faceColor = geometry.faceColours[i]
+                        material = BlenderMaterials.getMaterial(geometry.faceColours[i], isSlopeMaterial)
 
                         if material is not None:
                             if mesh.materials.get(material.name) is None:
@@ -3391,7 +3485,7 @@ def setupRealisticLook():
             background = nodes["Background"]
             links.new(env_tex.outputs[0],background.inputs[0])
     else:
-        scene.world.horizon_color = (1.0, 1.0, 1.0, 1.0)
+        scene.world.horizon_color = (1.0, 1.0, 1.0)
 
     if Options.setRenderSettings:
         if hasattr(scene.render.layers[0], "cycles"):
