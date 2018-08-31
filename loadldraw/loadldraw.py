@@ -169,7 +169,7 @@ globalSlopeBricks = {
     '3665':{-45}, 
     '3675':{63}, 
     '3676':{-45}, 
-    '3678':{24}, 
+    '3678b':{24}, 
     '3684':{15}, 
     '3685':{16}, 
     '3688':{15}, 
@@ -932,6 +932,15 @@ class CachedGeometry:
     def clearCache():
         CachedGeometry.__cache = {}
 
+# **************************************************************************************
+# **************************************************************************************
+class FaceInfo:
+    def __init__(self, faceColour, culling, windingCCW, isGrainySlopeAllowed):
+        self.faceColour = faceColour
+        self.culling = culling
+        self.windingCCW = windingCCW
+        self.isGrainySlopeAllowed = isGrainySlopeAllowed
+
 
 # **************************************************************************************
 # **************************************************************************************
@@ -941,13 +950,11 @@ class LDrawGeometry:
     def __init__(self):
         self.points = []
         self.faces = []
-        self.faceColours = []
-        self.culling = []
-        self.windingCCW = []
+        self.faceInfo = []
         self.edges = []
         self.edgeIndices = []
-
-    def parseFace(self, parameters, cull, ccw):
+        
+    def parseFace(self, parameters, cull, ccw, isGrainySlopeAllowed):
         """Parse a face from parameters"""
 
         num_points = int(parameters[0])
@@ -971,9 +978,7 @@ class LDrawGeometry:
         newFace = list(range(pointCount, pointCount + num_points))
         self.points.extend(newPoints)
         self.faces.append(newFace)
-        self.faceColours.append(colourName)
-        self.culling.append(cull)
-        self.windingCCW.append(ccw)
+        self.faceInfo.append(FaceInfo(colourName, cull, ccw, isGrainySlopeAllowed))
 
     def parseEdge(self, parameters):
         """Parse an edge from parameters"""
@@ -993,7 +998,7 @@ class LDrawGeometry:
             assert i < numPoints
             assert i >= 0
 
-    def appendGeometry(self, geometry, matrix, isStudLogo, parentMatrix, cull, invert):
+    def appendGeometry(self, geometry, matrix, isStud, isStudLogo, parentMatrix, cull, invert):
         combinedMatrix = parentMatrix * matrix
         isReflected = combinedMatrix.determinant() < 0.0
         reflectStudLogo = isStudLogo and isReflected
@@ -1005,7 +1010,7 @@ class LDrawGeometry:
 
         # Append face information
         pointCount = len(self.points)
-        newIndices = []
+        newFaceInfo = []
         for index, face in enumerate(geometry.faces):
             # Gather points for this face (and transform points)
             newPoints = []
@@ -1017,8 +1022,9 @@ class LDrawGeometry:
             for i in range(len(newFace)):
                 newFace[i] += pointCount
             
-            faceCCW = geometry.windingCCW[index] != invert
-            faceCull = geometry.culling[index] and cull
+            faceInfo = geometry.faceInfo[index]
+            faceCCW = faceInfo.windingCCW != invert
+            faceCull = faceInfo.culling and cull
             
             # If we are going to resolve ambiguous normals by "best guess" we will let 
             # Blender calculate that for us later. Just cull with arbitrary winding for now.
@@ -1029,9 +1035,8 @@ class LDrawGeometry:
             if faceCCW or not faceCull:
                 self.points.extend(newPoints)
                 self.faces.append(newFace)
-                self.windingCCW.append(True)
-                self.culling.append(True)
-                newIndices.append(geometry.faceColours[index])
+
+                newFaceInfo.append(FaceInfo(faceInfo.faceColour, True, True, not isStud and faceInfo.isGrainySlopeAllowed))
                 self.verify(newFace, len(self.points))
 
             if not faceCull:
@@ -1043,13 +1048,12 @@ class LDrawGeometry:
             if not faceCCW or not faceCull:
                 self.points.extend(newPoints[::-1])
                 self.faces.append(newFace)
-                self.windingCCW.append(True)
-                self.culling.append(True)
-                newIndices.append(geometry.faceColours[index])
+                
+                newFaceInfo.append(FaceInfo(faceInfo.faceColour, True, True, not isStud and faceInfo.isGrainySlopeAllowed))
                 self.verify(newFace, len(self.points))
 
-        self.faceColours.extend(newIndices)
-        assert len(self.faces) == len(self.faceColours)
+        self.faceInfo.extend(newFaceInfo)
+        assert len(self.faces) == len(self.faceInfo)
 
         # Append edge information
         newEdges = []
@@ -1155,10 +1159,6 @@ class LDrawNode:
         for child in self.file.childNodes:
             child.load()
 
-    def __bakeColours(self, faceColours, realColourName):
-        # Replaces the default colour 16 in our faceColours list with a specific colour
-        return list(map((lambda c: LDrawNode.resolveColour(c, realColourName)), faceColours))
-
     def resolveColour(colourName, realColourName):
         if colourName == "16":
             return realColourName
@@ -1203,12 +1203,13 @@ class LDrawNode:
             combinedMatrix = parentMatrix * self.matrix
 
             # Start with a copy of our file's geometry
-            assert len(self.file.geometry.faces) == len(self.file.geometry.faceColours)
+            assert len(self.file.geometry.faces) == len(self.file.geometry.faceInfo)
             bakedGeometry = LDrawGeometry()
-            bakedGeometry.appendGeometry(self.file.geometry, Math.identityMatrix, False, combinedMatrix, self.bfcCull, self.bfcInverted)
+            bakedGeometry.appendGeometry(self.file.geometry, Math.identityMatrix, self.file.isStud, self.file.isStudLogo, combinedMatrix, self.bfcCull, self.bfcInverted)
 
-            # Replace the default colour
-            bakedGeometry.faceColours = self.__bakeColours(bakedGeometry.faceColours, ourColourName)
+            # Replaces the default colour 16 in our faceColours list with a specific colour
+            for faceInfo in bakedGeometry.faceInfo:
+                faceInfo.faceColour = LDrawNode.resolveColour(faceInfo.faceColour, ourColourName)
 
             # Append each child's geometry
             for child in self.file.childNodes:
@@ -1217,11 +1218,12 @@ class LDrawNode:
                     childColourName = LDrawNode.resolveColour(child.colourName, ourColourName)
                     childMeshName, bg = child.getBlenderGeometry(childColourName, basename, combinedMatrix, accumCull, accumInvert)
 
+                    isStud = child.file.isStud
                     isStudLogo = child.file.isStudLogo
-                    bakedGeometry.appendGeometry(bg, child.matrix, isStudLogo, combinedMatrix, self.bfcCull, self.bfcInverted)
+                    bakedGeometry.appendGeometry(bg, child.matrix, isStud, isStudLogo, combinedMatrix, self.bfcCull, self.bfcInverted)
 
             CachedGeometry.addToCache(key, bakedGeometry)
-        assert len(bakedGeometry.faces) == len(bakedGeometry.faceColours)
+        assert len(bakedGeometry.faces) == len(bakedGeometry.faceInfo)
         return (meshName, bakedGeometry)
 
 
@@ -1403,6 +1405,8 @@ class LDrawFile:
         self.childNodes       = []
         self.bfcCertified     = None
 
+        isGrainySlopeAllowed = not self.isStud
+
         if self.lines is None:
             # Load the file into self.lines
             if not self.__loadLegoFile(self.filename, isFullFilepath, parentFilepath):
@@ -1554,9 +1558,9 @@ class LDrawFile:
                         printWarningOnce("Found double-sided polygons in file {0}".format(self.filename))
                         self.isDoubleSided = True
 
-                    assert len(self.geometry.faces) == len(self.geometry.faceColours)
-                    self.geometry.parseFace(parameters, self.bfcCertified and bfcLocalCull, bfcWindingCCW)
-                    assert len(self.geometry.faces) == len(self.geometry.faceColours)
+                    assert len(self.geometry.faces) == len(self.geometry.faceInfo)
+                    self.geometry.parseFace(parameters, self.bfcCertified and bfcLocalCull, bfcWindingCCW, isGrainySlopeAllowed)
+                    assert len(self.geometry.faces) == len(self.geometry.faceInfo)
 
                 bfcInvertNext = False
 
@@ -3098,38 +3102,34 @@ def addNodeToParentWithGroups(parentObject, groupNames, newObject):
     globalObjectsToAdd.append(newObject)
 
 # **************************************************************************************
-def isSlopePart(partName):
+def slopeAnglesForPart(partName):
     """
-    Checks whether a given part should receive a grainy slope material.
+    Gets the allowable slope angles for a given part.
     """
-
     global globalSlopeAngles
 
-    # Is it a part which has a sloped face?
-    partNumber = re.findall(r'\D*\d+', partName)[0]
-    if partNumber in globalSlopeAngles.keys():
-        return True
+    # Check for a part number with or without a subsequent letter
+    match = re.match(r'\D*(\d+)([A-Za-z]?)', partName)
+    if match:
+        partNumberWithoutLetter = match.group(1)
+        partNumberWithLetter = partNumberWithoutLetter + match.group(2)
 
-    return False
+        if partNumberWithLetter in globalSlopeAngles:
+            return globalSlopeAngles[partNumberWithLetter]
+
+        if partNumberWithoutLetter in globalSlopeAngles:
+            return globalSlopeAngles[partNumberWithoutLetter]
+
+    return None
 
 # **************************************************************************************
-def isSlopeFace(partName, faceVertices):
+def isSlopeFace(slopeAngles, isGrainySlopeAllowed, faceVertices):
     """
-    Checks whether a given face of a certain part should receive a grainy slope material.
+    Checks whether a given face should receive a grainy slope material.
     """
-    
-    global globalSlopeAngles
-    global globalPartCenterOverride
 
-    # Step 1: is the area of the polygon too small? (e.g. a tiny face of the Lego logo as seen on studs)
-    if len(faceVertices) > 3:
-        # (Twice) the area of a quadrilateral
-        twice_area = ((faceVertices[2] - faceVertices[0]).cross(faceVertices[3]-faceVertices[1])).length
-    else:
-        # (Twice) the area of a triangle
-        twice_area = ((faceVertices[1] - faceVertices[0]).cross(faceVertices[2]-faceVertices[0])).length
-
-    if twice_area < (2.0 * Options.scale * Options.scale):
+    # Step 1: Ignore some faces (studs) when checking for a grainy face
+    if not isGrainySlopeAllowed:
         return False
 
     # Step 2: Calculate angle of face normal to the ground
@@ -3145,9 +3145,6 @@ def isSlopeFace(partName, faceVertices):
     # debugPrint("Angle to ground {0}".format(angleToGroundDegrees))
     
     # Step 3: Check angle of normal to ground is within one of the acceptable ranges for this part
-    partNumber = re.findall(r'\D*\d+', partName)[0]
-    slopeAngles = globalSlopeAngles[partNumber]
-
     if True in { c[0] <= angleToGroundDegrees <= c[1] for c in slopeAngles }:
         return True
 
@@ -3205,24 +3202,25 @@ def createBlenderObjectsFromNode(node,
                 # Create materials and assign material to each polygon
                 if mesh.users == 0:
                     assert len(mesh.polygons) == len(geometry.faces)
-                    assert len(geometry.faces) == len(geometry.faceColours)
+                    assert len(geometry.faces) == len(geometry.faceInfo)
 
-                    isSloped = isSlopePart(name)
+                    slopeAngles = slopeAnglesForPart(name)
+                    isSloped = slopeAngles is not None
                     for i, f in enumerate(mesh.polygons):
-                        isSlopeMaterial = isSloped and isSlopeFace(name, [geometry.points[j] for j in geometry.faces[i]])
+                        faceInfo = geometry.faceInfo[i]
+                        isSlopeMaterial = isSloped and isSlopeFace(slopeAngles, faceInfo.isGrainySlopeAllowed, [geometry.points[j] for j in geometry.faces[i]])
+                        faceColour = faceInfo.faceColour
                         # For debugging purposes, we can make sloped faces blue:
                         # if isSlopeMaterial:
-                        #     faceColor = "1"
-                        # else:
-                        #     faceColor = geometry.faceColours[i]
-                        material = BlenderMaterials.getMaterial(geometry.faceColours[i], isSlopeMaterial)
+                        #     faceColour = "1"
+                        material = BlenderMaterials.getMaterial(faceColour, isSlopeMaterial)
 
                         if material is not None:
                             if mesh.materials.get(material.name) is None:
                                 mesh.materials.append(material)
                             f.material_index = mesh.materials.find(material.name)
                         else:
-                            printWarningOnce("Could not find material '{0}' in mesh '{1}'.".format(geometry.faceColours[i], name))
+                            printWarningOnce("Could not find material '{0}' in mesh '{1}'.".format(faceColour, name))
 
                 # Cache mesh
                 geometry.mesh = mesh
@@ -3244,7 +3242,7 @@ def createBlenderObjectsFromNode(node,
         ob["Lego.isTransparent"] = False
         if mesh is not None:
             for i, f in enumerate(mesh.polygons):
-                material = BlenderMaterials.getMaterial(geometry.faceColours[i], False)
+                material = BlenderMaterials.getMaterial(geometry.faceInfo[i].faceColour, False)
                 if material is not None:
                     if "Lego.isTransparent" in material:
                         if material["Lego.isTransparent"]:
