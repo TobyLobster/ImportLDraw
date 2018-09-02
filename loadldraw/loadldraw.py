@@ -131,8 +131,6 @@ class Options:
 globalBrickCount = 0
 globalObjectsToAdd = []         # Blender objects to add to the scene
 globalCamerasToAdd = []         # Camera data to add to the scene
-globalMin = None
-globalMax = None
 globalContext = None
 globalWeldDistance = 0.0005
 globalPoints = []
@@ -809,7 +807,10 @@ class FileSystem:
         # at this point, the directory exists but not the file
 
         try:  # we are expecting dirname to be a directory, but it could be a file
-            files = os.listdir(dirname)
+            files = CachedDirectoryFilenames.getCached(dirname)
+            if files is None:
+                files = os.listdir(dirname)
+                CachedDirectoryFilenames.addToCache(dirname, files)
         except OSError:
             return
 
@@ -885,6 +886,25 @@ class FileSystem:
                 return fullPathName
 
         return None
+
+
+# **************************************************************************************
+# **************************************************************************************
+class CachedDirectoryFilenames:
+    """Cached dictionary of directory filenames keyed by directory path"""
+
+    __cache = {}        # Dictionary
+
+    def getCached(key):
+        if key in CachedDirectoryFilenames.__cache:
+            return CachedDirectoryFilenames.__cache[key]
+        return None
+
+    def addToCache(key, value):
+        CachedDirectoryFilenames.__cache[key] = value
+
+    def clearCache():
+        CachedDirectoryFilenames.__cache = {}
 
 
 # **************************************************************************************
@@ -3151,6 +3171,121 @@ def isSlopeFace(slopeAngles, isGrainySlopeAllowed, faceVertices):
     return False
 
 # **************************************************************************************
+def createMesh(name, meshName, geometry):
+    # Are there any points?
+    if not geometry.points:
+        return (None, False)
+
+    newMeshCreated = False
+
+    # Have we already cached this mesh?
+    if Options.createInstances and hasattr(geometry, 'mesh'):
+        mesh = geometry.mesh
+    else:
+        # Does this mesh already exist in Blender? 
+        if meshIsReusable(meshName, geometry):
+            mesh = bpy.data.meshes[meshName]
+        else:
+            # Create new mesh
+            # debugPrint("Creating Mesh for node {0}".format(node.filename))
+            mesh = bpy.data.meshes.new(meshName)
+
+            points = [p.to_tuple() for p in geometry.points]
+
+            mesh.from_pydata(points, [], geometry.faces)
+
+            mesh.validate()
+            mesh.update()
+        
+            # Set a custom parameter to record the options used to create this mesh
+            # Used for caching.
+            mesh['customMeshOptions'] = Options.meshOptionsString()
+
+            newMeshCreated = True
+
+        # Create materials and assign material to each polygon
+        if mesh.users == 0:
+            assert len(mesh.polygons) == len(geometry.faces)
+            assert len(geometry.faces) == len(geometry.faceInfo)
+
+            slopeAngles = slopeAnglesForPart(name)
+            isSloped = slopeAngles is not None
+            for i, f in enumerate(mesh.polygons):
+                faceInfo = geometry.faceInfo[i]
+                isSlopeMaterial = isSloped and isSlopeFace(slopeAngles, faceInfo.isGrainySlopeAllowed, [geometry.points[j] for j in geometry.faces[i]])
+                faceColour = faceInfo.faceColour
+                # For debugging purposes, we can make sloped faces blue:
+                # if isSlopeMaterial:
+                #     faceColour = "1"
+                material = BlenderMaterials.getMaterial(faceColour, isSlopeMaterial)
+
+                if material is not None:
+                    if mesh.materials.get(material.name) is None:
+                        mesh.materials.append(material)
+                    f.material_index = mesh.materials.find(material.name)
+                else:
+                    printWarningOnce("Could not find material '{0}' in mesh '{1}'.".format(faceColour, name))
+
+    # Cache mesh
+    if newMeshCreated:
+        geometry.mesh = mesh
+
+    return (mesh, newMeshCreated)
+
+# **************************************************************************************
+def addModifiers(ob):
+    # Add Bevel modifier to each instance
+    if Options.addBevelModifier:
+        bevelModifier = ob.modifiers.new("Bevel", type='BEVEL')
+        bevelModifier.width = Options.bevelWidth * Options.scale
+        bevelModifier.segments = 4
+        bevelModifier.profile = 0.5
+        bevelModifier.limit_method = 'WEIGHT'
+        bevelModifier.use_clamp_overlap = True
+
+    # Add edge split modifier to each instance
+    if Options.edgeSplit:
+        edgeModifier = ob.modifiers.new("Edge Split", type='EDGE_SPLIT')
+        edgeModifier.use_edge_sharp = True
+        edgeModifier.split_angle = math.radians(30.0)
+
+# **************************************************************************************
+def smoothShadingAndFreestyleEdges(ob):
+    # We would like to avoid using bpy.ops functions altogether since it 
+    # slows down progressively as more objects are added to the scene, but 
+    # we have no choice but to use it here (a) for smoothing and (b) for 
+    # marking freestyle edges (no bmesh options exist currently). To minimise 
+    # the performance drop, we add one object only to the scene, smooth it, 
+    # then remove it again. Only at the end of the import process are all the 
+    # objects properly added to the scene.
+
+    # Temporarily add object to scene
+    bpy.context.scene.objects.link(ob)
+
+    # Select object
+    ob.select = True
+    bpy.context.scene.objects.active = ob
+
+    # Smooth shading
+    if Options.smoothShading:
+        # Smooth the mesh
+        bpy.ops.object.shade_smooth()
+
+    if Options.instructionsLook:
+        # Mark all sharp edges as freestyle edges
+        me = bpy.context.object.data
+        for e in me.edges:
+            e.use_freestyle_mark = e.use_edge_sharp
+
+    # Deselect object
+    ob.select = False
+    bpy.context.scene.objects.active = None
+
+    # Remove object from scene
+    bpy.context.scene.objects.unlink(ob)
+
+
+# **************************************************************************************
 def createBlenderObjectsFromNode(node, 
                                  localMatrix, 
                                  name, 
@@ -3169,63 +3304,11 @@ def createBlenderObjectsFromNode(node,
     global globalPoints
 
     ob = None
-    newMeshCreated = False
 
     if node.isBlenderObjectNode():
         ourColourName = LDrawNode.resolveColour(node.colourName, realColourName)
         meshName, geometry = node.getBlenderGeometry(ourColourName, name)
-        if geometry.points:
-            # Have we already cached this mesh?
-            if Options.createInstances and hasattr(geometry, 'mesh'):
-                mesh = geometry.mesh
-            else:
-                # Does this mesh already exist in Blender? 
-                if meshIsReusable(meshName, geometry):
-                    mesh = bpy.data.meshes[meshName]
-                else:
-                    # Create new mesh
-                    # debugPrint("Creating Mesh for node {0}".format(node.filename))
-                    mesh = bpy.data.meshes.new(meshName)
-
-                    points = list(map((lambda p: p.to_tuple()), geometry.points))
-
-                    mesh.from_pydata(points, [], geometry.faces)
-                    mesh.validate()
-                    mesh.update()
-                    
-                    # Set a custom parameter to record the options used to create this mesh
-                    # Used for caching.
-                    mesh['customMeshOptions'] = Options.meshOptionsString()
-
-                    newMeshCreated = True
-
-                # Create materials and assign material to each polygon
-                if mesh.users == 0:
-                    assert len(mesh.polygons) == len(geometry.faces)
-                    assert len(geometry.faces) == len(geometry.faceInfo)
-
-                    slopeAngles = slopeAnglesForPart(name)
-                    isSloped = slopeAngles is not None
-                    for i, f in enumerate(mesh.polygons):
-                        faceInfo = geometry.faceInfo[i]
-                        isSlopeMaterial = isSloped and isSlopeFace(slopeAngles, faceInfo.isGrainySlopeAllowed, [geometry.points[j] for j in geometry.faces[i]])
-                        faceColour = faceInfo.faceColour
-                        # For debugging purposes, we can make sloped faces blue:
-                        # if isSlopeMaterial:
-                        #     faceColour = "1"
-                        material = BlenderMaterials.getMaterial(faceColour, isSlopeMaterial)
-
-                        if material is not None:
-                            if mesh.materials.get(material.name) is None:
-                                mesh.materials.append(material)
-                            f.material_index = mesh.materials.find(material.name)
-                        else:
-                            printWarningOnce("Could not find material '{0}' in mesh '{1}'.".format(faceColour, name))
-
-                # Cache mesh
-                geometry.mesh = mesh
-        else:
-            mesh = None
+        mesh, newMeshCreated = createMesh(name, meshName, geometry)
 
         # Format a name for the Blender Object
         if Options.numberNodes:
@@ -3241,8 +3324,8 @@ def createBlenderObjectsFromNode(node,
         # Mark object as transparent if any polygon is transparent
         ob["Lego.isTransparent"] = False
         if mesh is not None:
-            for i, f in enumerate(mesh.polygons):
-                material = BlenderMaterials.getMaterial(geometry.faceInfo[i].faceColour, False)
+            for faceInfo in geometry.faceInfo:
+                material = BlenderMaterials.getMaterial(faceInfo.faceColour, False)
                 if material is not None:
                     if "Lego.isTransparent" in material:
                         if material["Lego.isTransparent"]:
@@ -3288,6 +3371,7 @@ def createBlenderObjectsFromNode(node,
             addSharpEdges(bm, geometry, name)
 
             bm.to_mesh(ob.data)
+            bm.clear()
             bm.free()
             
             # Show the sharp edges in Edit Mode
@@ -3333,78 +3417,25 @@ def createBlenderObjectsFromNode(node,
                 ))
                 mesh.transform(gapsScaleMatrix)
 
-            # We would like to avoid using bpy.ops functions altogether since it 
-            # slows down progressively as more objects are added to the scene, but 
-            # we have no choice but to use it here (a) for smoothing and (b) for 
-            # marking freestyle edges (no bmesh options exist currently). To minimise 
-            # the performance drop, we add one object only to the scene, smooth it, 
-            # then remove it again. Only at the end of the import process are all the 
-            # objects properly added to the scene.
+            smoothShadingAndFreestyleEdges(ob)
 
-            # Temporarily add object to scene
-            bpy.context.scene.objects.link(ob)
-
-            # Select object
-            ob.select = True
-            bpy.context.scene.objects.active = ob
-
-            # Smooth shading
-            if Options.smoothShading:
-                # Smooth the mesh
-                bpy.ops.object.shade_smooth()
-
-            # Mark all sharp edges as freestyle edges
-            me = bpy.context.object.data
-            for e in me.edges:
-                e.use_freestyle_mark = e.use_edge_sharp
-
-            # Deselect object
-            ob.select = False
-            bpy.context.scene.objects.active = None
-
-            # Remove object from scene
-            bpy.context.scene.objects.unlink(ob)
-
-        # Add Bevel modifier to each instance
-        if Options.addBevelModifier:
-            if mesh:
-                bevelModifier = ob.modifiers.new("Bevel", type='BEVEL')
-                bevelModifier.width = Options.bevelWidth * Options.scale
-                bevelModifier.segments = 4
-                bevelModifier.profile = 0.5
-                bevelModifier.limit_method = 'WEIGHT'
-                bevelModifier.use_clamp_overlap = True
-
-        # Add edge split modifier to each instance
-        if Options.edgeSplit:
-            if mesh:
-                edgeModifier = ob.modifiers.new("Edge Split", type='EDGE_SPLIT')
-                edgeModifier.use_edge_sharp = True
-                edgeModifier.split_angle = math.radians(30.0)
-
-        # Keep track of the global space bounding box, for positioning the object at the end
-        # Notice that we do this after scaling from Options.gaps
-        if Options.positionObjectOnGroundAtOrigin:
+        # Keep track of all vertices in global space, for positioning the camera and/or root object at the end
+        # Notice that we do this after scaling for Options.gaps
+        if Options.positionObjectOnGroundAtOrigin or Options.positionCamera:
             if mesh and mesh.vertices:
-                points = list(map((lambda p: localToWorldSpaceMatrix * localMatrix * p.co), mesh.vertices))
+                localTransform = localToWorldSpaceMatrix * localMatrix
+                points = [localTransform * p.co for p in mesh.vertices]
 
-                global globalMin
-                global globalMax
-
-                for p in points:
-                    globalMin[0] = min(p[0], globalMin[0])
-                    globalMin[1] = min(p[1], globalMin[1])
-                    globalMin[2] = min(p[2], globalMin[2])
-                    globalMax[0] = max(p[0], globalMax[0])
-                    globalMax[1] = max(p[1], globalMax[1])
-                    globalMax[2] = max(p[2], globalMax[2])
-
-                # Remember all the points, for camera placement later                
-                globalPoints += points
+                # Remember all the points                
+                globalPoints.extend(points)
 
         # Hide selection of studs
         if node.file.isStud:
             ob.hide_select = True
+
+        # Add bevel and edge split modifiers as needed
+        if mesh:
+            addModifiers(ob)
     else:
         blenderParentTransform = blenderParentTransform * localMatrix
 
@@ -3727,6 +3758,9 @@ def setupInstructionsLook():
 
 # **************************************************************************************
 def iterateCameraPosition(camera, render, vcentre3d, moveCamera):
+
+    global globalPoints
+
     bpy.context.scene.update()
     
     minX = sys.float_info.max
@@ -3753,11 +3787,11 @@ def iterateCameraPosition(camera, render, vcentre3d, moveCamera):
     for point in globalPoints:
         p1 = mp_matrix * mathutils.Vector((point.x, point.y, point.z, 1))
         if isOrtho:
-            point2d = mathutils.Vector((p1.x, p1.y))
+            point2d = (p1.x, p1.y)
         elif abs(p1.w)<1e-8:
             continue
         else:
-            point2d = mathutils.Vector((p1.x/p1.w, p1.y/p1.w))
+            point2d = (p1.x/p1.w, p1.y/p1.w)
         minX = min(point2d[0], minX)
         minY = min(point2d[1], minY)
         maxX = max(point2d[0], maxX)
@@ -3863,6 +3897,7 @@ def loadFromFile(context, filename, isFullFilepath=True):
         return None
 
     # Clear caches
+    CachedDirectoryFilenames.clearCache()
     CachedFiles.clearCache()
     CachedGeometry.clearCache()
     BlenderMaterials.clearCache()
@@ -3905,17 +3940,11 @@ def loadFromFile(context, filename, isFullFilepath=True):
 
     global globalBrickCount
     global globalObjectsToAdd
-    global globalMin
-    global globalMax
     global globalPoints
 
     globalBrickCount = 0
     globalObjectsToAdd = []
     globalPoints = []
-
-    # Keep track of our bounding box in global coordinate space
-    globalMin = mathutils.Vector((sys.float_info.max, sys.float_info.max, sys.float_info.max))
-    globalMax = mathutils.Vector((-sys.float_info.max, -sys.float_info.max, -sys.float_info.max))
 
     debugPrint("Creating NodeGroups")
     BlenderMaterials.createBlenderNodeGroups()
@@ -3928,37 +3957,73 @@ def loadFromFile(context, filename, isFullFilepath=True):
     camera = scene.camera
     render = scene.render
 
-    # Finally add each object to the scene
-    debugPrint("Adding objects to scene")
-    for ob in globalObjectsToAdd:
-        scene.objects.link(ob)
+    debugPrint("Number of vertices: " + str(len(globalPoints)))
 
-    # Add cameras to the scene
-    for ob in globalCamerasToAdd:
-        cam = ob.createCameraNode()
-        cam.parent = rootOb
+    # Take the convex hull of all the points in the scene (operation must have at least three vertices)
+    # This results in far fewer points to consider when adjusting the object and/or camera position.
+    if len(globalPoints) >= 3:
+        bm = bmesh.new()
+        [bm.verts.new(v) for v in globalPoints]
+        bm.verts.ensure_lookup_table()
 
-    # Select the newly created root object
-    rootOb.select = True
-    scene.objects.active = rootOb
+        ret = bmesh.ops.convex_hull(bm, input=bm.verts, use_existing_faces=False)
+        globalPoints = [vert.co.copy() for vert in ret["geom"] if isinstance(vert, bmesh.types.BMVert)]
+        del ret
+        bm.clear()
+        bm.free()
+
+        debugPrint("Number of vertices of convex hull: " + str(len(globalPoints)))
+
+        # Put convex hull back into scene - for testing purposes
+        # mesh_dst = bpy.data.meshes.new(name="convexHull")
+        # bm.to_mesh(mesh_dst)
+        # obj_cell = bpy.data.objects.new(name="convexHull", object_data=mesh_dst)
+        # scene.objects.link(obj_cell)
 
     # Centre object
-    vcentre = (globalMin + globalMax) * 0.5
-    offsetToCentreModel = mathutils.Vector((-vcentre.x, -vcentre.y, -globalMin.z))
-    if Options.positionObjectOnGroundAtOrigin:
-        if globalMin.x != sys.float_info.max:
+    if globalPoints:
+        # Calculate our bounding box in global coordinate space
+        boundingBoxMin = mathutils.Vector((0, 0, 0))
+        boundingBoxMax = mathutils.Vector((0, 0, 0))
+
+        boundingBoxMin[0] = min(p[0] for p in globalPoints)
+        boundingBoxMin[1] = min(p[1] for p in globalPoints)
+        boundingBoxMin[2] = min(p[2] for p in globalPoints)
+        boundingBoxMax[0] = max(p[0] for p in globalPoints)
+        boundingBoxMax[1] = max(p[1] for p in globalPoints)
+        boundingBoxMax[2] = max(p[2] for p in globalPoints)
+
+        vcentre = (boundingBoxMin + boundingBoxMax) * 0.5
+        offsetToCentreModel = mathutils.Vector((-vcentre.x, -vcentre.y, -boundingBoxMin.z))
+        if Options.positionObjectOnGroundAtOrigin:
             debugPrint("Centre object")
             rootOb.location += offsetToCentreModel
             
             # Offset all points
-            globalPoints = list(map((lambda p: p + offsetToCentreModel), globalPoints))
-        offsetToCentreModel = mathutils.Vector((0, 0, 0))
+            globalPoints = [p + offsetToCentreModel for p in globalPoints]
+            offsetToCentreModel = mathutils.Vector((0, 0, 0))
 
-    globalObjectsToAdd = []
-    globalCamerasToAdd = []
+    if Options.positionCamera:
+        debugPrint("Positioning Camera")
+
+        # Set up a default camera position and rotation
+        camera.location = mathutils.Vector((6.5, -6.5, 4.75))
+        camera.rotation_mode = 'XYZ'
+        camera.rotation_euler = mathutils.Euler((1.0471975803375244, 0.0, 0.7853981852531433), 'XYZ')
+
+        # Must have at least three vertices to move the camera
+        if len(globalPoints) >= 3:
+            isOrtho = scene.camera.data.type == 'ORTHO'
+            if isOrtho:
+                iterateCameraPosition(camera, render, vcentre, True)
+            else:
+                for i in range(20):
+                    error = iterateCameraPosition(camera, render, vcentre, True)
+                    if (error < 0.001):
+                        break
 
     # Get existing scene names
-    sceneObjectNames = list(map((lambda x: x.name), scene.objects))
+    sceneObjectNames = [x.name for x in scene.objects]
 
     # Remove default objects
     if Options.removeDefaultObjects:
@@ -3971,6 +4036,26 @@ def loadFromFile(context, filename, isFullFilepath=True):
             lampVector = lamp.location - mathutils.Vector((4.076245307922363, 1.0054539442062378, 5.903861999511719))
             if (lampVector.length < 0.001):
                 scene.objects.unlink(lamp)
+    
+    # Finally add each object to the scene
+    debugPrint("Adding {0} objects to scene".format(len(globalObjectsToAdd)))
+    for ob in globalObjectsToAdd:
+        scene.objects.link(ob)
+
+    # Add cameras to the scene
+    for ob in globalCamerasToAdd:
+        cam = ob.createCameraNode()
+        cam.parent = rootOb
+
+    globalObjectsToAdd = []
+    globalCamerasToAdd = []
+
+    # Select the newly created root object
+    rootOb.select = True
+    scene.objects.active = rootOb
+
+    # Get existing scene names
+    sceneObjectNames = [x.name for x in scene.objects]
 
     # Add ground plane with white material
     if Options.addGroundPlane and not Options.instructionsLook:
@@ -4019,46 +4104,6 @@ def loadFromFile(context, filename, isFullFilepath=True):
         setupInstructionsLook()
     else:
         setupRealisticLook()
-
-    if Options.positionCamera:
-        debugPrint("Positioning Camera")
-
-        # Set up a default camera position and rotation
-        camera.location = mathutils.Vector((6.5, -6.5, 4.75))
-        camera.rotation_mode = 'XYZ'
-        camera.rotation_euler = mathutils.Euler((1.0471975803375244, 0.0, 0.7853981852531433), 'XYZ')
-
-        # Find vertices of the convex hull
-        debugPrint("Number of vertices: " + str(len(globalPoints)))
-
-        # Convex hull operation must have at least three vertices
-        if len(globalPoints) >= 3:
-            bm = bmesh.new()
-            [bm.verts.new(v) for v in globalPoints]
-            bm.verts.ensure_lookup_table()
-
-            ret = bmesh.ops.convex_hull(bm, input=bm.verts, use_existing_faces=False)
-            globalPoints = [vert.co.copy() for vert in ret["geom"] if isinstance(vert, bmesh.types.BMVert)]
-            del ret
-            bm.clear()
-            bm.free()
-
-            debugPrint("Number of vertices of convex hull: " + str(len(globalPoints)))
-
-            # Put convex hull back into scene - for testing purposes
-            # mesh_dst = bpy.data.meshes.new(name="convexHull")
-            # bm.to_mesh(mesh_dst)
-            # obj_cell = bpy.data.objects.new(name="convexHull", object_data=mesh_dst)
-            # scene.objects.link(obj_cell)
-        
-            isOrtho = scene.camera.data.type == 'ORTHO'
-            if isOrtho:
-                iterateCameraPosition(camera, render, vcentre, True)
-            else:
-                for i in range(20):
-                    error = iterateCameraPosition(camera, render, vcentre, True)
-                    if (error < 0.001):
-                        break
 
     debugPrint("Load Done")
     return rootOb
