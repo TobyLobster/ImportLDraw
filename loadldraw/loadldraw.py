@@ -42,6 +42,7 @@ import re
 import bmesh
 import copy
 import platform
+import itertools
 
 # **************************************************************************************
 # **************************************************************************************
@@ -3070,6 +3071,58 @@ def addSharpEdges(bm, geometry, filename):
                 # Add bevel weight
                 if bwLayer is not None:
                     meshEdge[bwLayer] = 1.0
+
+        verts = set(bm.verts)
+
+        while(verts):
+            v = verts.pop()
+            edges = [e for e in v.link_edges if len(e.link_faces) == 1]
+            for e1, e2 in itertools.combinations(edges, 2):
+
+                # ensure e1 is always the longer edge
+                if e1.calc_length() < e2.calc_length():
+                    e1, e2 = e2, e1
+
+                v1 = e1.other_vert(v)
+                v2 = e2.other_vert(v)
+                vec1 = v1.co - v.co
+                vec2 = v2.co - v.co
+
+                if vec1.angle(vec2) < 0.02:
+                    old_face = e1.link_faces[0]
+                    new_verts = old_face.verts[:]
+
+                    e2.smooth &= e1.smooth
+                    e2[bwLayer] = max(e1[bwLayer], e2[bwLayer])
+
+                    i = new_verts.index(v)
+                    i1 = new_verts.index(v1)
+                    if i1 - i in [1, -1]:
+                        new_verts.insert(max(i,i1), v2)
+                    else:
+                        new_verts.insert(0, v2)
+
+                    new_face = bm.faces.new(new_verts)
+
+                    # copy material to new face
+                    new_face.material_index = old_face.material_index
+
+                    # copy metadata to the new edge
+                    for e in v2.link_edges:
+                        if e.other_vert(v2) is v1:
+                            e.smooth &= e1.smooth
+                            e[bwLayer] = max(e1[bwLayer], e[bwLayer])
+
+                    bmesh.ops.delete(bm, geom=[e1], context=2)
+
+                    # re-check the vertices we modified
+                    verts.add(v)
+                    verts.add(v2)
+                    break
+
+        bm.faces.ensure_lookup_table()
+        bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
 
 # **************************************************************************************
 def meshIsReusable(meshName, geometry):
