@@ -3228,10 +3228,7 @@ def isSlopeFace(slopeAngles, isGrainySlopeAllowed, faceVertices):
     # debugPrint("Angle to ground {0}".format(angleToGroundDegrees))
     
     # Step 3: Check angle of normal to ground is within one of the acceptable ranges for this part
-    if True in { c[0] <= angleToGroundDegrees <= c[1] for c in slopeAngles }:
-        return True
-
-    return False
+    return any(c[0] <= angleToGroundDegrees <= c[1] for c in slopeAngles)
 
 # **************************************************************************************
 def createMesh(name, meshName, geometry):
