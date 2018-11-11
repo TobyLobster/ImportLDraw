@@ -868,7 +868,7 @@ class FileSystem:
 
         return lines
 
-    def locate(filename, rootPath = None):
+    def locate(filename, allSearchPaths, rootPath = None):
         """Given a file name of an ldraw file, find the full path"""
 
         partName = filename.replace("\\", os.path.sep)
@@ -877,7 +877,6 @@ class FileSystem:
         if rootPath is None:
             rootPath = os.path.dirname(filename)
 
-        allSearchPaths = Configure.searchPaths[:]
         if rootPath not in allSearchPaths:
             allSearchPaths.append(rootPath)
 
@@ -1271,7 +1270,7 @@ class LDrawFile:
                 parentDir = os.path.dirname(filepath)
             else:
                 parentDir = os.path.dirname(parentFilepath)
-            result = FileSystem.locate(filepath, parentDir)
+            result = FileSystem.locate(filepath, Configure.searchPaths[:], parentDir)
             if result is None:
                 printWarningOnce("Missing file {0}".format(filepath))
                 return False
