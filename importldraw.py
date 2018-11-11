@@ -134,7 +134,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
 
     importScale = FloatProperty(
         name="Scale",
-        description="Sets a scale for the model.",
+        description="Sets a scale for the model",
         default=prefs.get("scale", 0.01)
     )
 
@@ -143,7 +143,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         description="Resolution of part primitives, ie. how much geometry they have",
         default=prefs.get("resolution", "Standard"),
         items=(
-            ("Standard", "Standard primitives",        "Import using standard resolution primitives"),
+            ("Standard", "Standard primitives",        "Import using standard resolution primitives."),
             ("High",     "High resolution primitives", "Import using high resolution primitives."),
             ("Low",      "Low resolution primitives",  "Import using low resolution primitives.")
         )
@@ -154,14 +154,14 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         description="Smooth faces and add an edge-split modifier",
         default=prefs.get("smoothShading", True)
     )
-    
+
     look = EnumProperty(
         name="Overall Look",
         description="Realism or Schematic look",
         default=prefs.get("useLook", "normal"),
         items=(
             ("normal", "Realistic Look", "Render to look realistic."),
-            ("instructions", "Lego Instructions Look", "Render to look like the instruction book pictures"),
+            ("instructions", "Lego Instructions Look", "Render to look like the instruction book pictures."),
         )
     )
 
@@ -208,13 +208,13 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
 
     numberNodes = BoolProperty(
         name="Number each object",
-        description="Each object has a five digit prefix eg. 00001_car. This keeps the list in it's proper order.",
+        description="Each object has a five digit prefix eg. 00001_car. This keeps the list in it's proper order",
         default=prefs.get("numberNodes", True)
     )
 
     positionOnGround = BoolProperty(
         name="Put model on ground at origin",
-        description="The object is centred at the origin, and on the ground plane.",
+        description="The object is centred at the origin, and on the ground plane",
         default=prefs.get("positionObjectOnGroundAtOrigin", True)
     )
     
@@ -232,29 +232,29 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
 
     useLogoStuds = BoolProperty(
         name="Show 'LEGO' logo on studs",
-        description="Shows the LEGO logo on each stud (at the expense of some extra geometry and import time).",
+        description="Shows the LEGO logo on each stud (at the expense of some extra geometry and import time)",
         default=prefs.get("useLogoStuds", False)
     )
 
     instanceStuds = BoolProperty(
         name="Make individual studs",
-        description="Creates a Blender Object for each and every stud (WARNING: can be slow to import and edit in Blender if there are lots of studs).",
+        description="Creates a Blender Object for each and every stud (WARNING: can be slow to import and edit in Blender if there are lots of studs)",
         default=prefs.get("instanceStuds", False)
     )
 
     resolveNormals = EnumProperty(
         name="Resolve ambiguous normals option",
-        description="Some older LDraw parts have faces with ambiguous normals, this specifies what do do with them.",
+        description="Some older LDraw parts have faces with ambiguous normals, this specifies what do do with them",
         default=prefs.get("resolveNormals", "guess"),
         items=(
-            ("guess", "Recalculate Normals", "Uses Blender's Recalculate Normals to get a consistent set of normals"),
-            ("double", "Two faces back to back", "Two faces are added with their normals pointing in opposite directions"),
+            ("guess", "Recalculate Normals", "Uses Blender's Recalculate Normals to get a consistent set of normals."),
+            ("double", "Two faces back to back", "Two faces are added with their normals pointing in opposite directions."),
         )
     )
 
     bevelEdges = BoolProperty(
         name="Bevel edges",
-        description="Adds a Bevel modifier for rounding off sharp edges.",
+        description="Adds a Bevel modifier for rounding off sharp edges",
         default=prefs.get("bevelEdges", True)
     )
     
@@ -266,19 +266,19 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
 
     addEnvironment = BoolProperty(
         name="Add Environment",
-        description="Adds a ground plane and environment texture (for realistic look only).",
+        description="Adds a ground plane and environment texture (for realistic look only)",
         default=prefs.get("addEnvironment", True)
     )
     
     positionCamera = BoolProperty(
         name="Position the camera",
-        description="Position the camera to show the whole model.",
+        description="Position the camera to show the whole model",
         default=prefs.get("positionCamera", True)
     )
 
     cameraBorderPercentage = FloatProperty(
         name="Camera Border %",
-        description="When positioning the camera, include a (percentage) border around the model in the render.",
+        description="When positioning the camera, include a (percentage) border around the model in the render",
         default=prefs.get("cameraBorderPercentage", 5.0)
     )
 
