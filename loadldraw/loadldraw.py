@@ -3072,6 +3072,10 @@ def addSharpEdges(bm, geometry, filename):
                 if bwLayer is not None:
                     meshEdge[bwLayer] = 1.0
 
+        # Look for any pair of colinear edges emanating from a single vertex, where each edge is connected to exactly one face.
+        # Subdivide the longer edge to include the shorter edge's vertex.
+        # Repeat until there's nothing left to subdivide.
+        # This helps create better (more manifold) geometry in general, and in particular solves issues with technic pieces with holes.
         verts = set(bm.verts)
 
         while(verts):
@@ -3088,13 +3092,16 @@ def addSharpEdges(bm, geometry, filename):
                 vec1 = v1.co - v.co
                 vec2 = v2.co - v.co
 
+                # test for colinear
                 if vec1.angle(vec2) < 0.02:
                     old_face = e1.link_faces[0]
                     new_verts = old_face.verts[:]
 
                     e2.smooth &= e1.smooth
-                    e2[bwLayer] = max(e1[bwLayer], e2[bwLayer])
+                    if bwLayer is not None:
+                        e2[bwLayer] = max(e1[bwLayer], e2[bwLayer])
 
+                    # insert the shorter edge's vertex
                     i = new_verts.index(v)
                     i1 = new_verts.index(v1)
                     if i1 - i in [1, -1]:
@@ -3102,6 +3109,7 @@ def addSharpEdges(bm, geometry, filename):
                     else:
                         new_verts.insert(0, v2)
 
+                    # create a new face that includes the newly inserted vertex
                     new_face = bm.faces.new(new_verts)
 
                     # copy material to new face
@@ -3111,8 +3119,10 @@ def addSharpEdges(bm, geometry, filename):
                     for e in v2.link_edges:
                         if e.other_vert(v2) is v1:
                             e.smooth &= e1.smooth
-                            e[bwLayer] = max(e1[bwLayer], e[bwLayer])
+                            if bwLayer is not None:
+                                e[bwLayer] = max(e1[bwLayer], e[bwLayer])
 
+                    # delete the old edge
                     bmesh.ops.delete(bm, geom=[e1], context=2)
 
                     # re-check the vertices we modified
