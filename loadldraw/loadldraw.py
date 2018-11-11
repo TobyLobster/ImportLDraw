@@ -755,6 +755,8 @@ class FileSystem:
     Reads text files in different encodings. Locates full filepath for a part.
     """
 
+    CachedDirectoryFilenames = {}
+
     # Takes a case-insensitive filepath and constructs a case sensitive version (based on an actual existing file)
     # See https://stackoverflow.com/questions/8462449/python-case-insensitive-file-name/8462613#8462613
     def pathInsensitive(path):
@@ -808,10 +810,10 @@ class FileSystem:
         # at this point, the directory exists but not the file
 
         try:  # we are expecting dirname to be a directory, but it could be a file
-            files = CachedDirectoryFilenames.getCached(dirname)
-            if files is None:
-                files = os.listdir(dirname)
-                CachedDirectoryFilenames.addToCache(dirname, files)
+            files = FileSystem.CachedDirectoryFilenames[dirname]
+        except KeyError:
+            files = os.listdir(dirname)
+            FileSystem.CachedDirectoryFilenames[dirname] = files
         except OSError:
             return
 
@@ -887,25 +889,6 @@ class FileSystem:
                 return fullPathName
 
         return None
-
-
-# **************************************************************************************
-# **************************************************************************************
-class CachedDirectoryFilenames:
-    """Cached dictionary of directory filenames keyed by directory path"""
-
-    __cache = {}        # Dictionary
-
-    def getCached(key):
-        if key in CachedDirectoryFilenames.__cache:
-            return CachedDirectoryFilenames.__cache[key]
-        return None
-
-    def addToCache(key, value):
-        CachedDirectoryFilenames.__cache[key] = value
-
-    def clearCache():
-        CachedDirectoryFilenames.__cache = {}
 
 
 # **************************************************************************************
@@ -3942,7 +3925,7 @@ def loadFromFile(context, filename, isFullFilepath=True):
         return None
 
     # Clear caches
-    CachedDirectoryFilenames.clearCache()
+    FileSystem.CachedDirectoryFilenames = {}
     CachedFiles.clearCache()
     LDrawNode.CachedGeometry = {}
     BlenderMaterials.clearCache()
