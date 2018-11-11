@@ -937,24 +937,6 @@ class CachedFiles:
 
 # **************************************************************************************
 # **************************************************************************************
-class CachedGeometry:
-    """Cached dictionary of LDrawGeometry objects"""
-
-    __cache = {}        # Dictionary
-
-    def getCached(key):
-        if key in CachedGeometry.__cache:
-            return CachedGeometry.__cache[key]
-        return None
-
-    def addToCache(key, value):
-        CachedGeometry.__cache[key] = value
-
-    def clearCache():
-        CachedGeometry.__cache = {}
-
-# **************************************************************************************
-# **************************************************************************************
 class FaceInfo:
     def __init__(self, faceColour, culling, windingCCW, isGrainySlopeAllowed):
         self.faceColour = faceColour
@@ -1088,6 +1070,8 @@ class LDrawGeometry:
 class LDrawNode:
     """A node in the hierarchy. References one LDrawFile"""
 
+    CachedGeometry = {}
+
     def __init__(self, filename, isFullFilepath, parentFilepath, colourName=Options.defaultColour, matrix=Math.identityMatrix, bfcCull=True, bfcInverted=False, isLSynthPart=False, isSubPart=False, isRootNode=True, groupNames=[]):
         self.filename       = filename
         self.isFullFilepath = isFullFilepath
@@ -1219,8 +1203,9 @@ class LDrawNode:
         code = LDrawNode.getBFCCode(accumCull, accumInvert, self.bfcCull, self.bfcInverted)
         meshName = "Mesh_{0}_{1}{2}".format(basename, ourColourName, code)
         key = (self.filename, ourColourName, accumCull, accumInvert, self.bfcCull, self.bfcInverted)
-        bakedGeometry = CachedGeometry.getCached(key)
-        if bakedGeometry is None:
+        if key in LDrawNode.CachedGeometry:
+            bakedGeometry = LDrawNode.CachedGeometry[key]
+        else:
             combinedMatrix = parentMatrix * self.matrix
 
             # Start with a copy of our file's geometry
@@ -1243,7 +1228,7 @@ class LDrawNode:
                     isStudLogo = child.file.isStudLogo
                     bakedGeometry.appendGeometry(bg, child.matrix, isStud, isStudLogo, combinedMatrix, self.bfcCull, self.bfcInverted)
 
-            CachedGeometry.addToCache(key, bakedGeometry)
+            LDrawNode.CachedGeometry[key] = bakedGeometry
         assert len(bakedGeometry.faces) == len(bakedGeometry.faceInfo)
         return (meshName, bakedGeometry)
 
@@ -3959,7 +3944,7 @@ def loadFromFile(context, filename, isFullFilepath=True):
     # Clear caches
     CachedDirectoryFilenames.clearCache()
     CachedFiles.clearCache()
-    CachedGeometry.clearCache()
+    LDrawNode.CachedGeometry = {}
     BlenderMaterials.clearCache()
     Configure.warningSuppression = {}
 
