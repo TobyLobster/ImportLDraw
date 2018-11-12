@@ -878,7 +878,7 @@ class FileSystem:
             rootPath = os.path.dirname(filename)
 
         if rootPath not in allSearchPaths:
-            allSearchPaths.append(rootPath)
+            allSearchPaths = itertools.chain(allSearchPaths, [rootPath])
 
         for path in allSearchPaths:
             fullPathName = os.path.join(path, partName)
@@ -1270,7 +1270,7 @@ class LDrawFile:
                 parentDir = os.path.dirname(filepath)
             else:
                 parentDir = os.path.dirname(parentFilepath)
-            result = FileSystem.locate(filepath, Configure.searchPaths[:], parentDir)
+            result = FileSystem.locate(filepath, Configure.searchPaths, parentDir)
             if result is None:
                 printWarningOnce("Missing file {0}".format(filepath))
                 return False
