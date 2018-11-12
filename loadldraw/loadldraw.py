@@ -3680,23 +3680,11 @@ def setupInstructionsLook():
 
     # Move each part to appropriate scene layer
     for object in scene.objects:
-        isTransparent = False
         if "Lego.isTransparent" in object:
-            isTransparent = object["Lego.isTransparent"]
-
-            # Turn on the appropriate layers
-            if isTransparent:
-                object.layers[1] = True
-            else:
-                object.layers[0] = True
-
-            # Turn off all other layers as appropriate
-            length = len(object.layers)
-            for i in range(length):
-                if isTransparent:
-                    object.layers[i] = (i == 1)
-                else:
-                    object.layers[i] = (i == 0)
+            # Turn on/off all layers as appropriate
+            layer = 1 if object["Lego.isTransparent"] else 0
+            for i in range(len(object.layers)):
+                object.layers[i] = (i == layer)
 
             # Add object to the appropriate group
             if object.data != None:
