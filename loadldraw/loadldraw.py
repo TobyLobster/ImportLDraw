@@ -3525,7 +3525,7 @@ def setupRealisticLook():
         scene.world.use_nodes = True
         nodes = scene.world.node_tree.nodes
         links = scene.world.node_tree.links
-        worldNodeNames = list(map((lambda x: x.name), scene.world.node_tree.nodes))
+        worldNodeNames = [node.name for node in scene.world.node_tree.nodes]
 
         if "LegoEnvMap" in worldNodeNames:
             env_tex = nodes["LegoEnvMap"]
@@ -3552,7 +3552,7 @@ def setupRealisticLook():
             scene.cycles.glossy_bounces = 20
 
     # Check layer names to see if we were previously rendering instructions and change settings back.
-    layerNames = list(map((lambda x: x.name), render.layers))
+    layerNames = [layer.name for layer in render.layers]
     if ("SolidBricks" in layerNames) or ("TransparentBricks" in layerNames):
         render.use_freestyle = False
 
@@ -3594,7 +3594,7 @@ def setupRealisticLook():
         scene.use_nodes = True
 
         # If scene nodes exist for compositing instructions look, remove them
-        nodeNames = list(map((lambda x: x.name), scene.node_tree.nodes))
+        nodeNames = [node.name for node in scene.node_tree.nodes]
         if "Solid" in nodeNames:
            scene.node_tree.nodes.remove(scene.node_tree.nodes["Solid"])
 
@@ -3645,7 +3645,7 @@ def setupInstructionsLook():
         bpy.data.groups.new('WhiteEdgedObjects')
 
     # Look for/create the render layers we are interested in:
-    layerNames = list(map((lambda x: x.name), render.layers))
+    layerNames = [layer.name for layer in render.layers]
     if "SolidBricks" not in layerNames:
         bpy.ops.scene.render_layer_add()
         render.layers[-1].name = "SolidBricks"
@@ -3933,8 +3933,8 @@ def loadFromFile(context, filename, isFullFilepath=True):
     # node.printBFC()
 
     # Fix top level rotation from LDraw coordinate space to Blender coordinate space
-    node.file.geometry.points = list(map((lambda p: Math.rotationMatrix * p), node.file.geometry.points))
-    node.file.geometry.edges  = list(map((lambda e: (Math.rotationMatrix * e[0], Math.rotationMatrix * e[1])), node.file.geometry.edges))
+    node.file.geometry.points = [Math.rotationMatrix * p for p in node.file.geometry.points]
+    node.file.geometry.edges  = [(Math.rotationMatrix * e[0], Math.rotationMatrix * e[1]) for e in node.file.geometry.edges]
     for childNode in node.file.childNodes:
         childNode.matrix = Math.rotationMatrix * childNode.matrix
 
