@@ -3241,10 +3241,9 @@ def createMesh(name, meshName, geometry):
             assert len(geometry.faces) == len(geometry.faceInfo)
 
             slopeAngles = slopeAnglesForPart(name)
-            isSloped = slopeAngles is not None
             for i, f in enumerate(mesh.polygons):
                 faceInfo = geometry.faceInfo[i]
-                isSlopeMaterial = isSloped and isSlopeFace(slopeAngles, faceInfo.isGrainySlopeAllowed, [geometry.points[j] for j in geometry.faces[i]])
+                isSlopeMaterial = slopeAngles and isSlopeFace(slopeAngles, faceInfo.isGrainySlopeAllowed, [geometry.points[j] for j in geometry.faces[i]])
                 faceColour = faceInfo.faceColour
                 # For debugging purposes, we can make sloped faces blue:
                 # if isSlopeMaterial:
