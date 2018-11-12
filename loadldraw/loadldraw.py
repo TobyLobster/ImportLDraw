@@ -912,6 +912,11 @@ class CachedFiles:
         CachedFiles.__cache[key] = value
         CachedFiles.__lowercache[key.lower()] = value
 
+    def addFileToCache(relativePath, name):
+        """Loads and caches an LDraw file in the cache of files"""
+        file = LDrawFile(relativePath, False, "", None, True)
+        CachedFiles.addToCache(name, file)
+
     def clearCache():
         CachedFiles.__cache = {}
         CachedFiles.__lowercache = {}
@@ -3474,13 +3479,6 @@ def createBlenderObjectsFromNode(node,
 
     return ob
 
-# **************************************************************************************
-def addFileToCache(relativePath, name):
-    """Loads and caches an LDraw file in the cache of files"""
-
-    file = LDrawFile(relativePath, False, "", None, True)
-    CachedFiles.addToCache(name, file)
-    return True
 
 # **************************************************************************************
 def setupLineset(lineset, thickness, group):
@@ -3933,16 +3931,10 @@ def loadFromFile(context, filename, isFullFilepath=True):
     if Options.useLogoStuds:
         debugPrint("Loading stud files")
         # Load stud logo files into cache
-        addFileToCache("stud-logo"   + Options.logoStudVersion + ".dat", "stud.dat")
-        addFileToCache("stud2-logo"  + Options.logoStudVersion + ".dat", "stud2.dat")
-        addFileToCache("stud6-logo"  + Options.logoStudVersion + ".dat", "stud6.dat")
-        addFileToCache("stud6a-logo" + Options.logoStudVersion + ".dat", "stud6a.dat")
-        addFileToCache("stud7-logo"  + Options.logoStudVersion + ".dat", "stud7.dat")
-        addFileToCache("stud10-logo" + Options.logoStudVersion + ".dat", "stud10.dat")
-        addFileToCache("stud13-logo" + Options.logoStudVersion + ".dat", "stud13.dat")
-        addFileToCache("stud15-logo" + Options.logoStudVersion + ".dat", "stud15.dat")
-        addFileToCache("stud20-logo" + Options.logoStudVersion + ".dat", "stud20.dat")
-        addFileToCache("studa-logo"  + Options.logoStudVersion + ".dat", "studa.dat")
+        for stud in ['', '2', '6', '6a', '7', '10', '13', '15', 'a']:
+            CachedFiles.addFileToCache(
+                "stud{}-logo{}.dat".format(stud, Options.logoStudVersion), "stud{}.dat".format(stud)
+            )
 
     # Load and parse file to create geometry
     filename = os.path.expanduser(filename)
