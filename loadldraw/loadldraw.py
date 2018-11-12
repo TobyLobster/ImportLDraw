@@ -237,8 +237,8 @@ globalSlopeBricks = {
 # Create a regular dictionary of parts with ranges of angles to check
 margin = 5 # Allow 5 degrees either way to compensate for measuring inaccuracies
 globalSlopeAngles = {}
-for part in globalSlopeBricks:
-    globalSlopeAngles[part] = {(c-margin, c+margin) if type(c) is not tuple else (min(c)-margin,max(c)+margin) for c in globalSlopeBricks[part]}
+for part, angles in globalSlopeBricks.items():
+    globalSlopeAngles[part] = {(c-margin, c+margin) if type(c) is not tuple else (min(c)-margin,max(c)+margin) for c in angles}
 
 # **************************************************************************************
 def internalPrint(message):
