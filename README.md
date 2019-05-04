@@ -12,15 +12,16 @@ It supports **.mpd**, **.ldr**, **.l3b**, and **.dat** file formats.
 It's intended to be accurate, compatible, and fast (in that order of priority).
 
 ## Features ##
++ Available for both Blender 2.79 and Blender 2.80
 + **Mac** and **Windows** supported (and hopefully **Linux**, but this is currently untested).
 + **Bricksmith** compatible.
 + **MPD** file compatible.
 + **LeoCAD** groups and cameras (both perspective and orthographic) supported.
 + **LSynth** bendable parts supported (synthesized models).
-+ Both *Cycles* and *Blender Render* engines supported. It renders either engine from a single scene.
-+ Import **photorealistic** look, or **Instructions** Look.
-+ **Realistic materials** including standard brick material, transparent, rubber, and even the less common materials like chrome, metal, pearlescent, glow-in-the-dark, glitter and speckle.
-+ **Principled Shader supported** Uses Blender's new 'Principled Shader' where available for optimal look (but still works well without).
++ *Cycles* and *Blender Render* engines supported. It renders either engine from a single scene.
++ Import **photorealistic** look, or **Instructions** look.
++ **Physically Based Realistic materials** - standard brick material, transparent, rubber, chrome, metal, pearlescent, glow-in-the-dark, glitter and speckle.
++ **Principled Shader supported** Uses Blender's 'Principled Shader' where available for optimal look (but still works well when unavailable).
 + **Accurate colour handling**. Correct colour space management is used so that e.g. black parts look black.
 + **Direct colours** supported.
 + **Back face culling** - fully parses all BFC information, for accurate normals.
@@ -30,6 +31,7 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 + **Gaps between bricks** - Optionally adds a small space between each brick, as in real life.
 + **Smart face smoothing** - Uses Edge-Split Modifier and Sharp Edges derived from Ldraw lines, for smooth curved surfaces and sharp corners.
 + **Concave walls** - Optionally look as if each brick has very slightly concave walls (with the photorealistic renderer), which affects the look of light reflections.
++ **Light bricks** - Bricks that emit light are supported.
 + **Fast** - even large models can be imported in seconds.
 
 ![Ghostbusters](./images/ghostbusters_960.png)
@@ -40,13 +42,14 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 
 + Download the latest version from the [Releases](https://github.com/TobyLobster/ImportLDraw/releases) page
 + Open Blender
-+ From the Blender menu click: File > User Preferences
++ If you are in Blender 2.79 or lower, choose from the menu: File > User Preferences
++ If you are in Blender 2.80 or later, choose from the menu: Edit > Preferences
 + Click the *Add-ons* tab
-+ Click the *Install from file...* button
++ Click the *Install from file...* button (Blender 2.79) or *Install...* button (Blender 2.80)
 + Navigate to the zip file you downloaded and select it
 + Find *Import LDraw* in the list of Add-ons (search for *LDraw* if necessary)
 + Tick the check mark next to it to activate the add-on.
-+ Click the *Save User Settings* button so that it will still be active next time you launch Blender.
++ Click the *Save User Settings* button (Blender 2.79) or *Save Preferences* button (Blender 2.80) so that it will still be active next time you launch Blender.
 
 **Setting the LDraw Parts Library directory**
 
