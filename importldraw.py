@@ -121,24 +121,24 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
 
     # File type filter in file browser
     filename_ext = ".ldr"
-    filter_glob: StringProperty(
+    filter_glob = StringProperty(
         default="*.mpd;*.ldr;*.l3b;*.dat",
         options={'HIDDEN'}
     )
 
-    ldrawPath: StringProperty(
+    ldrawPath = StringProperty(
         name="",
         description="Full filepath to the LDraw Parts Library (download from http://www.ldraw.org)",
         default=prefs.get("ldrawDirectory", loadldraw.Configure.findDefaultLDrawDirectory())
     )
 
-    importScale: FloatProperty(
+    importScale = FloatProperty(
         name="Scale",
         description="Sets a scale for the model",
         default=prefs.get("scale", 0.01)
     )
 
-    resPrims: EnumProperty(
+    resPrims = EnumProperty(
         name="Resolution of part primitives",
         description="Resolution of part primitives, ie. how much geometry they have",
         default=prefs.get("resolution", "Standard"),
@@ -149,13 +149,13 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         )
     )
 
-    smoothParts: BoolProperty(
+    smoothParts = BoolProperty(
         name="Smooth faces and edge-split",
         description="Smooth faces and add an edge-split modifier",
         default=prefs.get("smoothShading", True)
     )
 
-    look: EnumProperty(
+    look = EnumProperty(
         name="Overall Look",
         description="Realism or Schematic look",
         default=prefs.get("useLook", "normal"),
@@ -165,7 +165,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         )
     )
 
-    colourScheme: EnumProperty(
+    colourScheme = EnumProperty(
         name="Colour scheme options",
         description="Colour scheme options",
         default=prefs.get("useColurScheme", "lgeo"),
@@ -176,73 +176,73 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         )
     )
 
-    addGaps: BoolProperty(
+    addGaps = BoolProperty(
         name="Add space between each part:",
         description="Add a small space between each part",
         default=prefs.get("gaps", False)
     )
 
-    gapsSize: FloatProperty(
+    gapsSize = FloatProperty(
         name="Space",
         description="Amount of space between each part",
         default=prefs.get("gapWidth", 0.01)
     )
 
-    curvedWalls: BoolProperty(
+    curvedWalls = BoolProperty(
         name="Use curved wall normals",
         description="Makes surfaces look slightly concave",
         default=prefs.get("curvedWalls", True)
     )
 
-    importCameras: BoolProperty(
+    importCameras = BoolProperty(
         name="Import cameras",
         description="Import camera definitions (from models authored in LeoCAD)",
         default=prefs.get("importCameras", True)
     )
 
-    linkParts: BoolProperty(
+    linkParts = BoolProperty(
         name="Link identical parts",
         description="Identical parts (of the same type and colour) share the same mesh",
         default=prefs.get("linkParts", True)
     )
 
-    numberNodes: BoolProperty(
+    numberNodes = BoolProperty(
         name="Number each object",
         description="Each object has a five digit prefix eg. 00001_car. This keeps the list in it's proper order",
         default=prefs.get("numberNodes", True)
     )
 
-    positionOnGround: BoolProperty(
+    positionOnGround = BoolProperty(
         name="Put model on ground at origin",
         description="The object is centred at the origin, and on the ground plane",
         default=prefs.get("positionObjectOnGroundAtOrigin", True)
     )
     
-    flatten: BoolProperty(
+    flatten = BoolProperty(
         name="Flatten tree",
         description="In Scene Outliner, all parts are placed directly below the root - there's no tree of submodels",
         default=prefs.get("flattenHierarchy", False)
     )
 
-    useUnofficialParts: BoolProperty(
+    useUnofficialParts = BoolProperty(
         name="Include unofficial parts",
         description="Additionally searches for parts in the <ldraw-dir>/unofficial/ directory",
         default=prefs.get("useUnofficialParts", True)
     )
 
-    useLogoStuds: BoolProperty(
+    useLogoStuds = BoolProperty(
         name="Show 'LEGO' logo on studs",
         description="Shows the LEGO logo on each stud (at the expense of some extra geometry and import time)",
         default=prefs.get("useLogoStuds", False)
     )
 
-    instanceStuds: BoolProperty(
+    instanceStuds = BoolProperty(
         name="Make individual studs",
         description="Creates a Blender Object for each and every stud (WARNING: can be slow to import and edit in Blender if there are lots of studs)",
         default=prefs.get("instanceStuds", False)
     )
 
-    resolveNormals: EnumProperty(
+    resolveNormals = EnumProperty(
         name="Resolve ambiguous normals option",
         description="Some older LDraw parts have faces with ambiguous normals, this specifies what do do with them",
         default=prefs.get("resolveNormals", "guess"),
@@ -252,31 +252,31 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         )
     )
 
-    bevelEdges: BoolProperty(
+    bevelEdges = BoolProperty(
         name="Bevel edges",
         description="Adds a Bevel modifier for rounding off sharp edges",
         default=prefs.get("bevelEdges", True)
     )
     
-    bevelWidth: FloatProperty(
+    bevelWidth = FloatProperty(
         name="Bevel Width",
         description="Width of the bevelled edges",
         default=prefs.get("bevelWidth", 0.5)
     )
 
-    addEnvironment: BoolProperty(
+    addEnvironment = BoolProperty(
         name="Add Environment",
         description="Adds a ground plane and environment texture (for realistic look only)",
         default=prefs.get("addEnvironment", True)
     )
     
-    positionCamera: BoolProperty(
+    positionCamera = BoolProperty(
         name="Position the camera",
         description="Position the camera to show the whole model",
         default=prefs.get("positionCamera", True)
     )
 
-    cameraBorderPercentage: FloatProperty(
+    cameraBorderPercentage = FloatProperty(
         name="Camera Border %",
         description="When positioning the camera, include a (percentage) border around the model in the render",
         default=prefs.get("cameraBorderPercentage", 5.0)
@@ -286,11 +286,9 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         """Display import options."""
 
         layout = self.layout
-        layout.use_property_split = True # Active single-column layout
-        
         box = layout.box()
-        box.label(text="Import Options", icon='PREFERENCES')
-        box.label(text="LDraw filepath:", icon='FILEBROWSER')
+        box.label("Import Options", icon='SCRIPTWIN')
+        box.label("LDraw filepath:", icon='FILESEL')
         box.prop(self, "ldrawPath")
         box.prop(self, "importScale")
         box.prop(self, "look", expand=True)
@@ -317,7 +315,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         box.prop(self, "numberNodes")
         box.prop(self, "flatten")
 
-        box.label(text="Resolve Ambiguous Normals:", icon='ORIENTATION_NORMAL')
+        box.label("Resolve Ambiguous Normals:", icon='EDIT')
         box.prop(self, "resolveNormals", expand=True)
 
     def execute(self, context):
