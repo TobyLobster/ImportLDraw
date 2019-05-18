@@ -65,24 +65,30 @@ def matvecmul(a, b):
 # **************************************************************************************
 def linkToScene(ob):
     if isBlender28OrLater:
-        bpy.context.collection.objects.link(ob)
+        if bpy.context.collection.objects.find(ob.name) < 0:
+            bpy.context.collection.objects.link(ob)
     else:
-        bpy.context.scene.objects.link(ob)
+        if bpy.context.scene.objects.objects.find(ob.name) < 0:
+            bpy.context.scene.objects.link(ob)
         
 # **************************************************************************************
 def linkToCollection(collectionName, ob):
     # Add object to the appropriate collection
     if hasCollections:
-        bpy.data.collections[collectionName].objects.link(ob)
+        if bpy.data.collections[collectionName].objects.find(ob.name) < 0:
+            bpy.data.collections[collectionName].objects.link(ob)
     else:
-        bpy.data.groups[collectionName].objects.link(ob)
+        if bpy.data.groups[collectionName].objects.find(ob.name) < 0:
+            bpy.data.groups[collectionName].objects.link(ob)
 
 # **************************************************************************************
 def unlinkFromScene(ob):
     if isBlender28OrLater:
-        bpy.context.collection.objects.unlink(ob)
+        if bpy.context.collection.objects.find(ob.name) >= 0:
+            bpy.context.collection.objects.unlink(ob)
     else:
-        bpy.context.scene.objects.unlink(ob)
+        if bpy.context.scene.objects.find(ob.name) >= 0:
+            bpy.context.scene.objects.unlink(ob)
 
 # **************************************************************************************
 def selectObject(ob):
