@@ -349,6 +349,10 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("cameraBorderPercentage",self.cameraBorderPercentage)
         ImportLDrawOps.prefs.save()
 
+        # Set bpy related variables here since it isn't available immediately on Blender startup
+        loadldraw.isBlender28OrLater = hasattr(bpy.app, "version") and bpy.app.version >= (2, 80)
+        loadldraw.hasCollections = hasattr(bpy.data, "collections")
+
         # Set import options and import
         loadldraw.Options.ldrawDirectory     = self.ldrawPath
         loadldraw.Options.scale              = self.importScale
