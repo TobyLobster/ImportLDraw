@@ -4333,24 +4333,25 @@ def loadFromFile(context, filename, isFullFilepath=True):
             globalPoints = [p + offsetToCentreModel for p in globalPoints]
             offsetToCentreModel = mathutils.Vector((0, 0, 0))
 
-    if Options.positionCamera:
-        debugPrint("Positioning Camera")
-
-        # Set up a default camera position and rotation
-        camera.location = mathutils.Vector((6.5, -6.5, 4.75))
-        camera.rotation_mode = 'XYZ'
-        camera.rotation_euler = mathutils.Euler((1.0471975803375244, 0.0, 0.7853981852531433), 'XYZ')
-
-        # Must have at least three vertices to move the camera
-        if len(globalPoints) >= 3:
-            isOrtho = scene.camera.data.type == 'ORTHO'
-            if isOrtho:
-                iterateCameraPosition(camera, render, vcentre, True)
-            else:
-                for i in range(20):
-                    error = iterateCameraPosition(camera, render, vcentre, True)
-                    if (error < 0.001):
-                        break
+    if camera is not None:
+        if Options.positionCamera:
+            debugPrint("Positioning Camera")
+    
+            # Set up a default camera position and rotation
+            camera.location = mathutils.Vector((6.5, -6.5, 4.75))
+            camera.rotation_mode = 'XYZ'
+            camera.rotation_euler = mathutils.Euler((1.0471975803375244, 0.0, 0.7853981852531433), 'XYZ')
+    
+            # Must have at least three vertices to move the camera
+            if len(globalPoints) >= 3:
+                isOrtho = camera.data.type == 'ORTHO'
+                if isOrtho:
+                    iterateCameraPosition(camera, render, vcentre, True)
+                else:
+                    for i in range(20):
+                        error = iterateCameraPosition(camera, render, vcentre, True)
+                        if (error < 0.001):
+                            break
 
     # Get existing scene names
     sceneObjectNames = [x.name for x in scene.objects]
