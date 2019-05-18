@@ -82,6 +82,15 @@ def linkToCollection(collectionName, ob):
             bpy.data.groups[collectionName].objects.link(ob)
 
 # **************************************************************************************
+def linkCollectionToScene(collectionName):
+    if hasCollections:
+        if bpy.data.collections.find(collectionName) < 0:
+            bpy.context.scene.collection.children.link(bpy.data.collections.new(collectionName))
+    else:
+        if bpy.data.groups.find(collectionName) < 0:
+            bpy.data.groups.new(collectionName)
+
+# **************************************************************************************
 def unlinkFromScene(ob):
     if isBlender28OrLater:
         if bpy.context.collection.objects.find(ob.name) >= 0:
@@ -3864,33 +3873,10 @@ def setupInstructionsLook():
         scene.cycles.transparent_max_bounces = 80
 
     # Add two groups, if not already present
-    if hasCollections:
-        if bpy.data.collections.find('Black Edged Bricks Collection') < 0:
-            # Create collection
-            bpy.data.collections.new('Black Edged Bricks Collection')
-            # Add collection to scene
-            scene.collection.children.link(bpy.data.collections['Black Edged Bricks Collection'])
-        if bpy.data.collections.find('White Edged Bricks Collection') < 0:
-            # Create collection
-            bpy.data.collections.new('White Edged Bricks Collection')
-            # Add collection to scene
-            scene.collection.children.link(bpy.data.collections['White Edged Bricks Collection'])
-        if bpy.data.collections.find('Solid Bricks Collection') < 0:
-            # Create collection
-            bpy.data.collections.new('Solid Bricks Collection')
-            # Add collection to scene
-            scene.collection.children.link(bpy.data.collections['Solid Bricks Collection'])
-        if bpy.data.collections.find('Transparent Bricks Collection') < 0:
-            # Create collection
-            bpy.data.collections.new('Transparent Bricks Collection')
-            # Add collection to scene
-            scene.collection.children.link(bpy.data.collections['Transparent Bricks Collection'])
-
-    else:
-        if bpy.data.groups.find('Black Edged Bricks Collection') < 0:
-            bpy.data.groups.new('Black Edged Bricks Collection')
-        if bpy.data.groups.find('White Edged Bricks Collection') < 0:
-            bpy.data.groups.new('White Edged Bricks Collection')
+    linkCollectionToScene('Black Edged Bricks Collection')
+    linkCollectionToScene('White Edged Bricks Collection')
+    linkCollectionToScene('Solid Bricks Collection')
+    linkCollectionToScene('Transparent Bricks Collection')
 
     # Find or create the render/view layers we are interested in:
     layers = getLayers(scene)
