@@ -232,8 +232,8 @@ globalContext = None
 globalWeldDistance = 0.0005
 globalPoints = []
 
-isBlender28OrLater = hasattr(bpy.app, "version") and bpy.app.version >= (2, 80)
-hasCollections = hasattr(bpy.data, "collections")
+isBlender28OrLater = None
+hasCollections = None
 if isBlender28OrLater:
     lightName = "Light"
 else:
