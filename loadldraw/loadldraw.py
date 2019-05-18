@@ -3747,7 +3747,10 @@ def setupRealisticLook():
             background = nodes["Background"]
             links.new(env_tex.outputs[0],background.inputs[0])
     else:
-        scene.world.horizon_color = (1.0, 1.0, 1.0)
+        if isBlender28OrLater:
+            scene.world.color = (1.0, 1.0, 1.0)
+        else:
+            scene.world.horizon_color = (1.0, 1.0, 1.0)
 
     if Options.setRenderSettings:
         useDenoising(scene, True)
