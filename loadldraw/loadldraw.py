@@ -105,7 +105,7 @@ def deselectObject(ob):
 # **************************************************************************************
 def addPlane(location, size):
     if isBlender28OrLater:
-        bpy.ops.mesh.primitive_plane_add(size=size, view_align=False, enter_editmode=False, location=location)
+        bpy.ops.mesh.primitive_plane_add(size=size, enter_editmode=False, location=location)
     else:
         bpy.ops.mesh.primitive_plane_add(radius=size, view_align=False, enter_editmode=False, location=location)
 
@@ -1212,7 +1212,11 @@ class LDrawNode:
         self.groupNames     = groupNames.copy()
 
     def look_at(obj_camera, target, up_vector):
-        bpy.context.scene.update()
+        if isBlender28OrLater:
+            bpy.context.view_layer.update()
+        else:
+            bpy.context.scene.update()
+
         loc_camera = obj_camera.matrix_world.to_translation()
 
         #print("CamLoc = " + str(loc_camera[0]) + "," + str(loc_camera[1]) + "," + str(loc_camera[2]))
@@ -4079,7 +4083,10 @@ def iterateCameraPosition(camera, render, vcentre3d, moveCamera):
 
     global globalPoints
 
-    bpy.context.scene.update()
+    if isBlender28OrLater:
+        bpy.context.view_layer.update()
+    else:
+        bpy.context.scene.update()
     
     minX = sys.float_info.max
     maxX = -sys.float_info.max
@@ -4091,7 +4098,7 @@ def iterateCameraPosition(camera, render, vcentre3d, moveCamera):
     
     if isBlender28OrLater:
         projection_matrix = camera.calc_matrix_camera(
-            bpy.context.depsgraph,
+            bpy.context.evaluated_depsgraph_get(),
             x=render.resolution_x,
             y=render.resolution_y,
             scale_x=render.pixel_aspect_x,
