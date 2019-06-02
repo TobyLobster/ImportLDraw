@@ -68,8 +68,7 @@ def linkToScene(ob):
         if bpy.context.collection.objects.find(ob.name) < 0:
             bpy.context.collection.objects.link(ob)
     else:
-        if bpy.context.scene.objects.objects.find(ob.name) < 0:
-            bpy.context.scene.objects.link(ob)
+        bpy.context.scene.objects.link(ob)
         
 # **************************************************************************************
 def linkToCollection(collectionName, ob):
@@ -78,8 +77,7 @@ def linkToCollection(collectionName, ob):
         if bpy.data.collections[collectionName].objects.find(ob.name) < 0:
             bpy.data.collections[collectionName].objects.link(ob)
     else:
-        if bpy.data.groups[collectionName].objects.find(ob.name) < 0:
-            bpy.data.groups[collectionName].objects.link(ob)
+        bpy.data.groups[collectionName].objects.link(ob)
 
 # **************************************************************************************
 def unlinkFromScene(ob):
