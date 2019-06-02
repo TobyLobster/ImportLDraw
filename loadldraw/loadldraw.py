@@ -4104,8 +4104,13 @@ def iterateCameraPosition(camera, render, vcentre3d, moveCamera):
     modelview_matrix = camera.matrix_world.inverted()
     
     if isBlender28OrLater:
+        get_depsgraph_method = getattr(bpy.context, "evaluated_depsgraph_get", None)
+        if callable(get_depsgraph_method):
+            depsgraph = get_depsgraph_method()
+        else:
+            depsgraph = bpy.context.depsgraph
         projection_matrix = camera.calc_matrix_camera(
-            bpy.context.evaluated_depsgraph_get(),
+            depsgraph,
             x=render.resolution_x,
             y=render.resolution_y,
             scale_x=render.pixel_aspect_x,
