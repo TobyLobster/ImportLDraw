@@ -1827,6 +1827,11 @@ class BlenderMaterials:
 
             isTransparent = col["alpha"] < 1.0
 
+            if isBlender28OrLater and isTransparent:
+                material.blend_method = 'BLEND'
+                material.refraction_depth = 0.1
+                material.use_screen_refraction = True
+
             if Options.instructionsLook:
                 BlenderMaterials.__createCyclesBasic(nodes, links, colour, col["alpha"], "")
             elif col["name"] == "Milky_White":
@@ -3770,6 +3775,11 @@ def setupRealisticLook():
             scene.cycles.diffuse_bounces = 20
         if (scene.cycles.glossy_bounces < 20):
             scene.cycles.glossy_bounces = 20
+
+        if isBlender28OrLater:
+            scene.eevee.use_ssr = True
+            scene.eevee.use_ssr_refraction = True
+            scene.eevee.use_taa_reprojection = True
 
     # Check layer names to see if we were previously rendering instructions and change settings back.
     layerNames = getLayerNames(scene)
