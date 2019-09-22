@@ -4467,8 +4467,9 @@ def loadFromFile(context, filename, isFullFilepath=True):
     if Options.createInstances and Options.cleanupInstances:
         for ob in bpy.data.objects:
             if 'name' in ob.keys():
-                if object_data[ob['name']] is not None:
-                    ob.data = object_data[ob['name']]
+                if ob['name'] in object_data:
+                    if object_data[ob['name']] is not None:
+                        ob.data = object_data[ob['name']]
 
         object_data.clear()
 
