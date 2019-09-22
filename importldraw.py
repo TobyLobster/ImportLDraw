@@ -206,6 +206,12 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         default=prefs.get("linkParts", True)
     )
 
+    cleanupInstances: BoolProperty(
+        name="Cleanup linked parts",
+        description="Identical parts (regardless of colour) share the same mesh. Only applies if \"Link identical parts\" is chosen",
+        default=prefs.get("cleanupInstances", False)
+    )
+
     numberNodes: BoolProperty(
         name="Number each object",
         description="Each object has a five digit prefix eg. 00001_car. This keeps the list in it's proper order",
@@ -308,6 +314,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         box.prop(self, "curvedWalls")
         box.prop(self, "importCameras")
         box.prop(self, "linkParts")
+        box.prop(self, "cleanupInstances")
         box.prop(self, "useUnofficialParts")
 
         box.prop(self, "useLogoStuds")
@@ -337,6 +344,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("curvedWalls",           self.curvedWalls)
         ImportLDrawOps.prefs.set("importCameras",         self.importCameras)
         ImportLDrawOps.prefs.set("linkParts",             self.linkParts)
+        ImportLDrawOps.prefs.set("cleanupInstances",      self.cleanupInstances)
         ImportLDrawOps.prefs.set("numberNodes",           self.numberNodes)
         ImportLDrawOps.prefs.set("positionObjectOnGroundAtOrigin", self.positionOnGround)
         ImportLDrawOps.prefs.set("flattenHierarchy",      self.flatten)
@@ -360,6 +368,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.Options.resolution         = self.resPrims
         loadldraw.Options.defaultColour      = "4"
         loadldraw.Options.createInstances    = self.linkParts
+        loadldraw.Options.cleanupInstances   = self.cleanupInstances
         loadldraw.Options.instructionsLook   = self.look == "instructions"
         loadldraw.Options.useColourScheme    = self.colourScheme
         loadldraw.Options.numberNodes        = self.numberNodes

@@ -158,6 +158,7 @@ class Options:
     resolution         = "Standard"     # Choose from "High", "Standard", or "Low"
     defaultColour      = "4"            # Default colour ("4" = red)
     createInstances    = True           # Multiple bricks share geometry (recommended)
+    cleanupInstances   = False          # Set all materials to object so that all identical parts can be linked regardless of colour
     useColourScheme    = "lgeo"         # "ldraw", "alt", or "lgeo". LGEO gives the most true-to-life colours.
     numberNodes        = True           # Each node's name has a numerical prefix eg. 00001_car.dat (keeps nodes listed in a fixed order)
     removeDoubles      = True           # Remove duplicate vertices (recommended)
@@ -211,6 +212,7 @@ class Options:
                          str(Options.resolution), 
                          str(Options.defaultColour),
                          str(Options.createInstances), 
+                         str(Options.cleanupInstances),
                          str(Options.useColourScheme), 
                          str(Options.removeDoubles),
                          str(Options.smoothShading), 
@@ -3501,7 +3503,8 @@ def smoothShadingAndFreestyleEdges(ob):
 
 
 # **************************************************************************************
-def createBlenderObjectsFromNode(node, 
+object_data = {}
+def createBlenderObjectsFromNode(node,
                                  localMatrix, 
                                  name, 
                                  realColourName=Options.defaultColour, 
@@ -3535,6 +3538,14 @@ def createBlenderObjectsFromNode(node,
         # Create Blender Object
         ob = bpy.data.objects.new(blenderName, mesh)
         ob.matrix_local = matmul(blenderParentTransform, localMatrix)
+
+        if Options.createInstances and Options.cleanupInstances:
+            if ob is not None: ob['name'] = name
+            if ob['name'] not in object_data:  object_data[ob['name']] = mesh
+            for mat_slot in ob.material_slots:
+                mat = mat_slot.material
+                mat_slot.link = 'OBJECT'
+                mat_slot.material = mat
 
         # Mark object as transparent if any polygon is transparent
         ob["Lego.isTransparent"] = False
@@ -4452,6 +4463,18 @@ def loadFromFile(context, filename, isFullFilepath=True):
         setupInstructionsLook()
     else:
         setupRealisticLook()
+
+    if Options.createInstances and Options.cleanupInstances:
+        for ob in bpy.data.objects:
+            if 'name' in ob.keys():
+                if object_data[ob['name']] is not None:
+                    ob.data = object_data[ob['name']]
+
+        object_data.clear()
+
+        for mesh in bpy.data.meshes:
+            if mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
 
     debugPrint("Load Done")
     return rootOb
