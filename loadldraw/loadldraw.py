@@ -3374,7 +3374,7 @@ def isSlopeFace(slopeAngles, isGrainySlopeAllowed, faceVertices):
     faceNormal.normalize()
 
     # Clamp value to range -1 to 1 (ensure we are in the strict range of the acos function, taking account of rounding errors)
-    cosine = min(max(faceNormal.y, -1.0), 1.0)
+    cosine = min(max(-faceNormal.z, -1.0), 1.0)
 
     # Calculate angle of face normal to the ground (-90 to 90 degrees)
     angleToGroundDegrees = math.degrees(math.acos(cosine)) - 90
