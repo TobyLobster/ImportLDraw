@@ -251,96 +251,96 @@ else:
 # degrees) of the face's normal to the horizontal plane. Use a tuple to represent a 
 # range within which the angle must lie.
 globalSlopeBricks = {
-    '962':{45}, 
-    '2341':{-45}, 
-    '2449':{-16}, 
-    '2875':{45}, 
-    '2876':{(40, 63)}, 
-    '3037':{45}, 
-    '3038':{45}, 
-    '3039':{45}, 
-    '3040':{45}, 
-    '3041':{45}, 
-    '3042':{45}, 
-    '3043':{45}, 
-    '3044':{45}, 
-    '3045':{45}, 
-    '3046':{45}, 
-    '3048':{45}, 
-    '3049':{45}, 
-    '3135':{45}, 
-    '3297':{63}, 
-    '3298':{63}, 
-    '3299':{63}, 
-    '3300':{63}, 
-    '3660':{-45}, 
-    '3665':{-45}, 
-    '3675':{63}, 
-    '3676':{-45}, 
-    '3678b':{24}, 
-    '3684':{15}, 
-    '3685':{16}, 
-    '3688':{15}, 
-    '3747':{-63}, 
-    '4089':{-63}, 
-    '4161':{63}, 
-    '4286':{63}, 
-    '4287':{-63}, 
-    '4445':{45}, 
-    '4460':{16}, 
-    '4509':{63}, 
-    '4854':{-45}, 
-    '4856':{(-60, -70), -45}, 
-    '4857':{45}, 
-    '4858':{72}, 
-    '4861':{45, 63}, 
-    '4871':{-45}, 
-    '4885':{72}, 
-    '6069':{72, 45}, 
-    '6153':{(60, 70), (26, 34)}, 
-    '6227':{45}, 
-    '6270':{45}, 
-    '13269':{(40, 63)}, 
-    '13548':{45}, 
-    '15571':{45}, 
-    '18759':{-45}, 
-    '22390':{(40, 55)}, 
-    '22391':{(40, 55)}, 
-    '22889':{-45}, 
-    '28192':{45}, 
-    '30180':{47}, 
-    '30182':{45}, 
-    '30183':{-45}, 
-    '30249':{35}, 
-    '30283':{-45}, 
-    '30363':{72}, 
-    '30373':{-24}, 
-    '30382':{11, 45}, 
-    '30390':{-45}, 
-    '30499':{16}, 
-    '32083':{45}, 
-    '43708':{72}, 
-    '43710':{72, 45}, 
-    '43711':{72, 45}, 
-    '47759':{(40, 63)}, 
-    '52501':{-45}, 
-    '60219':{-45}, 
-    '60477':{72}, 
-    '60481':{24}, 
-    '63341':{45}, 
-    '72454':{-45}, 
-    '92946':{45}, 
-    '93348':{72}, 
-    '95188':{65}, 
-    '99301':{63}, 
-    '303923':{45}, 
-    '303926':{45}, 
-    '304826':{45}, 
-    '329826':{64}, 
-    '374726':{-64}, 
-    '428621':{64}, 
-    '4162628':{17}, 
-    '4195004':{45}, 
+    '962':{45},
+    '2341':{-45},
+    '2449':{-16},
+    '2875':{45},
+    '2876':{(40, 63)},
+    '3037':{45},
+    '3038':{45},
+    '3039':{45},
+    '3040':{45},
+    '3041':{45},
+    '3042':{45},
+    '3043':{45},
+    '3044':{45},
+    '3045':{45},
+    '3046':{45},
+    '3048':{45},
+    '3049':{45},
+    '3135':{45},
+    '3297':{63},
+    '3298':{63},
+    '3299':{63},
+    '3300':{63},
+    '3660':{-45},
+    '3665':{-45},
+    '3675':{63},
+    '3676':{-45},
+    '3678b':{24},
+    '3684':{15},
+    '3685':{16},
+    '3688':{15},
+    '3747':{-63},
+    '4089':{-63},
+    '4161':{63},
+    '4286':{63},
+    '4287':{-63},
+    '4445':{45},
+    '4460':{16},
+    '4509':{63},
+    '4854':{-45},
+    '4856':{(-60, -70), -45},
+    '4857':{45},
+    '4858':{72},
+    '4861':{45, 63},
+    '4871':{-45},
+    '4885':{72}, #blank
+    '6069':{72, 45},
+    '6153':{(60, 70), (26, 34)},
+    '6227':{45},
+    '6270':{45},
+    '13269':{(40, 63)},
+    '13548':{(45, 35)},
+    '15571':{45},
+    '18759':{-45},
+    '22390':{(40, 55)}, #blank
+    '22391':{(40, 55)},
+    '22889':{-45},
+    '28192':{45}, #blank
+    '30180':{47},
+    '30182':{45},
+    '30183':{-45},
+    '30249':{35},
+    '30283':{-45},
+    '30363':{72},
+    '30373':{-24},
+    '30382':{11, 45},
+    '30390':{-45},
+    '30499':{16},
+    '32083':{45},
+    '43708':{(64, 72)},
+    '43710':{72, 45},
+    '43711':{72, 45},
+    '47759':{(40, 63)},
+    '52501':{-45},
+    '60219':{-45},
+    '60477':{72},
+    '60481':{24},
+    '63341':{45},
+    '72454':{-45},
+    '92946':{45},
+    '93348':{72},
+    '95188':{65},
+    '99301':{63},
+    '303923':{45},
+    '303926':{45},
+    '304826':{45},
+    '329826':{64},
+    '374726':{-64},
+    '428621':{64},
+    '4162628':{17},
+    '4195004':{45},
 }
 
 globalLightBricks = {
@@ -1536,6 +1536,7 @@ class LDrawFile:
         self.lines            = lines
         self.isPart           = False
         self.isSubPart        = isSubPart
+        self.isModel          = False
         self.isStud           = LDrawFile.__isStud(filename)
         self.isStudLogo       = LDrawFile.__isStudLogo(filename)
         self.isLSynthPart     = False
@@ -4272,11 +4273,12 @@ def loadFromFile(context, filename, isFullFilepath=True):
     node.load()
     # node.printBFC()
 
-    # Fix top level rotation from LDraw coordinate space to Blender coordinate space
-    node.file.geometry.points = list(map((lambda p: matvecmul(Math.rotationMatrix, p)), node.file.geometry.points))
-    node.file.geometry.edges  = list(map((lambda e: (matvecmul(Math.rotationMatrix, e[0]), matvecmul(Math.rotationMatrix, e[1]))), node.file.geometry.edges))
-    for childNode in node.file.childNodes:
-        childNode.matrix = matmul(Math.rotationMatrix, childNode.matrix)
+    if node.file.isModel:
+        # Fix top level rotation from LDraw coordinate space to Blender coordinate space
+        node.file.geometry.points = list(map((lambda p: matvecmul(Math.rotationMatrix, p)), node.file.geometry.points))
+        node.file.geometry.edges  = list(map((lambda e: matvecmul(Math.rotationMatrix, e)), node.file.geometry.edges))
+        for childNode in node.file.childNodes:
+            childNode.matrix = matmul(Math.rotationMatrix, childNode.matrix)
 
     # Switch to Object mode and deselect all
     if bpy.ops.object.mode_set.poll():
@@ -4299,6 +4301,9 @@ def loadFromFile(context, filename, isFullFilepath=True):
     # Create Blender objects from the loaded file
     debugPrint("Creating Blender objects")
     rootOb = createBlenderObjectsFromNode(node, node.matrix, name)
+
+    if not node.file.isModel:
+        rootOb.data.transform(Math.rotationMatrix)
 
     scene  = bpy.context.scene
     camera = scene.camera
@@ -4327,8 +4332,8 @@ def loadFromFile(context, filename, isFullFilepath=True):
         # obj_cell = bpy.data.objects.new(name="convexHull", object_data=mesh_dst)
         # linkToScene(obj_cell)
 
-    # Centre object
-    if globalPoints:
+    # Centre object only if root node is a model
+    if node.file.isModel and globalPoints:
         # Calculate our bounding box in global coordinate space
         boundingBoxMin = mathutils.Vector((0, 0, 0))
         boundingBoxMax = mathutils.Vector((0, 0, 0))
@@ -4350,25 +4355,25 @@ def loadFromFile(context, filename, isFullFilepath=True):
             globalPoints = [p + offsetToCentreModel for p in globalPoints]
             offsetToCentreModel = mathutils.Vector((0, 0, 0))
 
-    if camera is not None:
-        if Options.positionCamera:
-            debugPrint("Positioning Camera")
-    
-            # Set up a default camera position and rotation
-            camera.location = mathutils.Vector((6.5, -6.5, 4.75))
-            camera.rotation_mode = 'XYZ'
-            camera.rotation_euler = mathutils.Euler((1.0471975803375244, 0.0, 0.7853981852531433), 'XYZ')
-    
-            # Must have at least three vertices to move the camera
-            if len(globalPoints) >= 3:
-                isOrtho = camera.data.type == 'ORTHO'
-                if isOrtho:
-                    iterateCameraPosition(camera, render, vcentre, True)
-                else:
-                    for i in range(20):
-                        error = iterateCameraPosition(camera, render, vcentre, True)
-                        if (error < 0.001):
-                            break
+        if camera is not None:
+            if Options.positionCamera:
+                debugPrint("Positioning Camera")
+
+                # Set up a default camera position and rotation
+                camera.location = mathutils.Vector((6.5, -6.5, 4.75))
+                camera.rotation_mode = 'XYZ'
+                camera.rotation_euler = mathutils.Euler((1.0471975803375244, 0.0, 0.7853981852531433), 'XYZ')
+
+                # Must have at least three vertices to move the camera
+                if len(globalPoints) >= 3:
+                    isOrtho = camera.data.type == 'ORTHO'
+                    if isOrtho:
+                        iterateCameraPosition(camera, render, vcentre, True)
+                    else:
+                        for i in range(20):
+                            error = iterateCameraPosition(camera, render, vcentre, True)
+                            if (error < 0.001):
+                                break
 
     # Get existing scene names
     sceneObjectNames = [x.name for x in scene.objects]
