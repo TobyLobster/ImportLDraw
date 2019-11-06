@@ -3559,7 +3559,11 @@ def createBlenderObjectsFromNode(node,
 
         # Add light to light bricks
         if (name in globalLightBricks):
-            lamp_data = bpy.data.lamps.new(name="LightLamp", type='POINT')
+            if isBlender28OrLater:
+                lights = bpy.data.lights
+            else:
+                lights = bpy.data.lamps
+            lamp_data = lights.new(name="LightLamp", type='POINT')
             lamp_data.shadow_soft_size = 0.05
             lamp_data.use_nodes = True
             emission_node = lamp_data.node_tree.nodes.get('Emission')
