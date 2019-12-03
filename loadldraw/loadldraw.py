@@ -2102,10 +2102,9 @@ class BlenderMaterials:
         node.location = x, y
         return node
 
-    def __nodeVoronoi(nodes, scale, x, y, colouring = 'CELLS'):
+    def __nodeVoronoi(nodes, scale, x, y):
         node = nodes.new('ShaderNodeTexVoronoi')
         node.location = x, y
-        node.coloring = colouring
         node.inputs['Scale'].default_value = scale
         return node
 
@@ -2487,16 +2486,16 @@ class BlenderMaterials:
 
             # create nodes
             node_texture_coordinate = BlenderMaterials.__nodeTexCoord(group.nodes, -300, 240)
-            node_voronoi = BlenderMaterials.__nodeVoronoi(group.nodes, 3.0/Options.scale, -100, 155, 'INTENSITY')
+            node_voronoi = BlenderMaterials.__nodeVoronoi(group.nodes, 3.0/Options.scale, -100, 155)
             node_bump = BlenderMaterials.__nodeBumpShader(group.nodes, 0.3, 0.08, 90, 50)
             node_bump.invert = True
 
             # link nodes together
             group.links.new(node_texture_coordinate.outputs['Object'], node_voronoi.inputs['Vector'])
-            group.links.new(node_voronoi.outputs['Fac'], node_bump.inputs['Height'])
+            group.links.new(node_voronoi.outputs['Distance'], node_bump.inputs['Height'])
             group.links.new(node_input.outputs['Strength'], node_bump.inputs['Strength'])
             group.links.new(node_input.outputs['Normal'], node_bump.inputs['Normal'])
-            group.links.new(node_bump.outputs['Normal'], node_output.inputs['Normal'])        
+            group.links.new(node_bump.outputs['Normal'], node_output.inputs['Normal'])
 
     # **********************************************************************************
     def __createBlenderFresnelNodeGroup():
