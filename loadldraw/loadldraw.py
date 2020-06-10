@@ -426,6 +426,13 @@ class Math:
                 (0.0,           0.0,            0.0,            1.0)
             ))
 
+        Math.noneMatrix = mathutils.Matrix((
+                (1.0,           0.0,            0.0,            0.0),
+                (0.0,           1.0,            0.0,            0.0),
+                (0.0,           0.0,            1.0,            0.0),
+                (0.0,           0.0,            0.0,            1.0)
+            ))
+
 
 # **************************************************************************************
 # **************************************************************************************
@@ -1298,6 +1305,10 @@ class LDrawNode:
         for child in self.file.childNodes:
             child.load()
 
+        # Load any children
+        for part in self.file.partNodes:
+            part.load()
+
     def resolveColour(colourName, realColourName):
         if colourName == "16":
             return realColourName
@@ -1542,6 +1553,9 @@ class LDrawFile:
         self.isDoubleSided    = False
         self.geometry         = LDrawGeometry()
         self.childNodes       = []
+        self.parts            = []
+        self.partMatrix       = []
+        self.partNodes        = []
         self.bfcCertified     = None
 
         isGrainySlopeAllowed = not self.isStud
@@ -1587,8 +1601,8 @@ class LDrawFile:
                         self.isSubPart = True
                     if 'primitive' in partType:
                         self.isSubPart = True
-                    #if 'shortcut' in partType:
-                    #    self.isPart = True
+                    if 'shortcut' in partType:
+                        self.isPart = True
 
                 if parameters[1] == "BFC":
                     # If unsure about being certified yet...
@@ -1681,9 +1695,24 @@ class LDrawFile:
                     if det < 0:
                         bfcInvertNext = not bfcInvertNext
                     canCullChildNode = (self.bfcCertified or self.isModel) and bfcLocalCull and (det != 0)
+                    
+                    # TODO: add configuration and cleanup not needed checks
+                    useInstancing = not(self.isPart or self.isSubPart or self.isStud or self.isStudLogo or self.isLSynthPart or bfcInvertNext)
 
-                    newNode = LDrawNode(new_filename, False, self.fullFilepath, new_colourName, localMatrix, canCullChildNode, bfcInvertNext, processingLSynthParts, not self.isModel, False, currentGroupNames)
-                    self.childNodes.append(newNode)
+                    if useInstancing:
+                        new_file_id = new_filename + '(' + new_colourName + ')'
+                        if new_file_id not in self.parts:
+                            newPart = LDrawNode(new_filename, False, self.fullFilepath, new_colourName, Math.noneMatrix, canCullChildNode, bfcInvertNext, processingLSynthParts, not self.isModel, False, currentGroupNames)
+                            self.parts.append(new_file_id)
+                            self.partNodes.append(newPart)
+                            self.partMatrix.append([])
+
+                        partIndex = self.parts.index(new_file_id)
+                        self.partMatrix[partIndex].append(localMatrix)
+
+                    else:
+                        newNode = LDrawNode(new_filename, False, self.fullFilepath, new_colourName, localMatrix, canCullChildNode, bfcInvertNext, processingLSynthParts, not self.isModel, False, currentGroupNames)
+                        self.childNodes.append(newNode)
 
                 # Parse an edge
                 elif parameters[0] == "2":
@@ -3681,6 +3710,54 @@ def createBlenderObjectsFromNode(node,
         # Create sub-objects recursively
         childColourName = LDrawNode.resolveColour(childNode.colourName, realColourName)
         createBlenderObjectsFromNode(childNode, childNode.matrix, childNode.filename, childColourName, blenderParentTransform, matmul(localToWorldSpaceMatrix, localMatrix), blenderNodeParent)
+
+    # Create parts and instance them
+    # TODO: add configuration option or make it more robust
+    if node.isRootNode:
+        # TODO: make sure this really does what it should
+        ob.matrix_local = matmul(Math.rotationMatrix, ob.matrix_local)
+        for part in node.file.parts:
+            partIndex = node.file.parts.index(part)
+            partNode = node.file.partNodes[partIndex]
+            partMatrix = node.file.partMatrix[partIndex]
+
+            placeholderMesh = bpy.data.meshes.new(part + ".placeholder")
+            placeholderObject = bpy.data.objects.new(part + ".placeholder", placeholderMesh)
+
+            placeholderObject.parent = ob
+            globalObjectsToAdd.append(placeholderObject)
+
+            verts = []
+            pols = []
+            for matrix in partMatrix:
+                newVerts = [
+                    matmul( matrix, mathutils.Vector((-0.5,-0.5,0.0))),
+                    matmul( matrix, mathutils.Vector((0.5,-0.5,0.0))),
+                    matmul( matrix, mathutils.Vector((0.5,0.5,0.0))),
+                    matmul( matrix, mathutils.Vector((-0.5,0.5,0.0)))
+                ]
+                
+                verts.extend(newVerts)
+                vertsLength = len(verts)
+                pols.append((vertsLength-4,vertsLength-3,vertsLength-2,vertsLength-1))
+
+            placeholderMesh.from_pydata(verts, [], pols)
+            placeholderMesh.update()
+
+            if Options.positionObjectOnGroundAtOrigin or Options.positionCamera:
+                globalPoints.extend(verts)
+
+            childColourName = LDrawNode.resolveColour(partNode.colourName, realColourName)
+            partObject = createBlenderObjectsFromNode(partNode, partNode.matrix, part, childColourName, blenderParentTransform, matmul(localToWorldSpaceMatrix, localMatrix), placeholderObject)
+
+            if partObject is not None:
+                # TODO: make < 2.8 compatible
+                # Set instancing to set position of the part
+                placeholderObject.instance_type = 'FACES'
+                placeholderObject.use_instance_faces_scale = True
+                placeholderObject.show_instancer_for_render = False
+                placeholderObject.show_instancer_for_viewport = False
+            # Show place holder when the part failed to be loaded correctly (e.g. missing corrupted)
 
     return ob
 
