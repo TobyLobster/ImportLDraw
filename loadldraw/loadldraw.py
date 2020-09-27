@@ -1106,8 +1106,11 @@ class LDrawGeometry:
         if num_points == 4:
             nA = (newPoints[1] - newPoints[0]).cross(newPoints[2] - newPoints[0])
             nB = (newPoints[2] - newPoints[1]).cross(newPoints[3] - newPoints[1])
+            nC = (newPoints[3] - newPoints[2]).cross(newPoints[0] - newPoints[2])
             if (nA.dot(nB) < 0):
                 newPoints[2], newPoints[3] = newPoints[3], newPoints[2]
+            elif (nB.dot(nC) < 0):
+                newPoints[2], newPoints[1] = newPoints[1], newPoints[2]
 
         pointCount = len(self.points)
         newFace = list(range(pointCount, pointCount + num_points))
