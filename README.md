@@ -12,7 +12,7 @@ It supports **.mpd**, **.ldr**, **.l3b**, and **.dat** file formats.
 It's intended to be accurate, compatible, and fast (in that order of priority).
 
 ## Features ##
-+ Available for Blender 2.79, Blender 2.81, and Blender 3.0
++ Works with Blender 2.79, Blender 2.81, and Blender 3.0
 + **Mac** and **Windows** supported (and hopefully **Linux**, but this is currently untested).
 + **Bricksmith** compatible.
 + **MPD** file compatible.
