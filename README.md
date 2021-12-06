@@ -12,7 +12,7 @@ It supports **.mpd**, **.ldr**, **.l3b**, and **.dat** file formats.
 It's intended to be accurate, compatible, and fast (in that order of priority).
 
 ## Features ##
-+ Available for both Blender 2.79 and Blender 2.81
++ Available for Blender 2.79, Blender 2.81, and Blender 3.0
 + **Mac** and **Windows** supported (and hopefully **Linux**, but this is currently untested).
 + **Bricksmith** compatible.
 + **MPD** file compatible.
@@ -43,13 +43,13 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 + Download the latest version from the [Releases](https://github.com/TobyLobster/ImportLDraw/releases) page
 + Open Blender
 + If you are in Blender 2.79 or lower, choose from the menu: File > User Preferences
-+ If you are in Blender 2.80 or later, choose from the menu: Edit > Preferences
++ If you are in Blender 2.81 or later, choose from the menu: Edit > Preferences
 + Click the *Add-ons* tab
-+ Click the *Install from file...* button (Blender 2.79) or *Install...* button (Blender 2.81)
++ Click the *Install from file...* button (Blender 2.79) or *Install...* button (Blender 2.81+)
 + Navigate to the zip file you downloaded and select it
 + Find *Import LDraw* in the list of Add-ons (search for *LDraw* if necessary)
 + Tick the check mark next to it to activate the add-on.
-+ Click the *Save User Settings* button (Blender 2.79) or *Save Preferences* button (Blender 2.81) so that it will still be active next time you launch Blender.
++ Click the *Save User Settings* button (Blender 2.79) or *Save Preferences* button (Blender 2.81+) so that it will still be active next time you launch Blender.
 
 **Setting the LDraw Parts Library directory**
 
