@@ -12,8 +12,8 @@ It supports **.mpd**, **.ldr**, **.l3b**, and **.dat** file formats.
 It's intended to be accurate, compatible, and fast (in that order of priority).
 
 ## Features ##
-+ Available for both Blender 2.79 and Blender 2.81
-+ **Mac** and **Windows** supported (and hopefully **Linux**, but this is currently untested).
++ Available for Blender 2.81 up to at least Blender 3.4
++ **Mac**, **Windows** and **Linux** supported.
 + **Bricksmith** compatible.
 + **MPD** file compatible.
 + **LeoCAD** groups and cameras (both perspective and orthographic) supported.
