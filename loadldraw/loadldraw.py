@@ -503,6 +503,7 @@ class Configure:
                                             "C:\\LDraw",
                                             "C:\\Program Files\\LDraw",
                                             "C:\\Program Files (x86)\\LDraw",
+                                            "C:\\Program Files\\Studio 2.0\\ldraw",
                                        ]
         elif Configure.isMac():
             ldrawPossibleDirectories = [
