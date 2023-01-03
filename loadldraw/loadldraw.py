@@ -1798,8 +1798,9 @@ class BlenderMaterials:
         material.use_nodes = True
 
         if col is not None:
-            colour = col["colour"] + (1.0,)
-            material.diffuse_color = getDiffuseColor(col["colour"])
+            if len(col["colour"]) == 3:
+                colour = col["colour"] + (1.0,)
+            material.diffuse_color = getDiffuseColor(col["colour"][0:3])
 
         if Options.instructionsLook:
             if not isBlender28OrLater:
@@ -3575,7 +3576,7 @@ def createBlenderObjectsFromNode(node,
             # (e.g. we use bmesh.* operations instead).
             # See discussion: http://blender.stackexchange.com/questions/7358/python-performance-with-blender-operators
 
-            # Use bevel weights (added to sharp edges)
+            # Use bevel weights (added to sharp edges) - Only available for Blender version < 3.4
             if hasattr(ob.data, "use_customdata_edge_bevel"):
                 ob.data.use_customdata_edge_bevel = True
 
@@ -3604,6 +3605,23 @@ def createBlenderObjectsFromNode(node,
             bm.to_mesh(ob.data)
             bm.clear()
             bm.free()
+
+            # Blender 3.4 removed 'ob.data.use_customdata_edge_bevel', so this seems to be the alternative:
+            if not hasattr(ob.data, "use_customdata_edge_bevel"):
+                # See https://blender.stackexchange.com/a/270716
+                area_type = 'VIEW_3D' # change this to use the correct Area Type context you want to process in
+                areas  = [area for area in bpy.context.window.screen.areas if area.type == area_type]
+
+                if len(areas) <= 0:
+                    raise Exception(f"Make sure an Area of type {area_type} is open or visible on your screen!")
+                if bpy.ops.object.mode_set.poll():
+                    bpy.ops.object.mode_set(mode='EDIT')
+                    with bpy.context.temp_override(
+                        window=bpy.context.window,
+                        area=areas[0],
+                        regions=[region for region in areas[0].regions if region.type == 'WINDOW'][0],
+                        screen=bpy.context.window.screen):
+                        bpy.ops.mesh.customdata_bevel_weight_edge_add()
 
             # Show the sharp edges in Edit Mode
             if isBlender28OrLater:
