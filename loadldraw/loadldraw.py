@@ -3887,8 +3887,9 @@ def setupInstructionsLook():
     if scene.camera is not None:
         scene.camera.data.type = 'ORTHO'
 
-    # For Blender Render, set transparent background
-    render.alpha_mode = 'TRANSPARENT'
+    # For Blender Render, set transparent background. (Not available in Blender 3.5.1 or higher.)
+    if hasattr(render, "alpha_mode"):
+        render.alpha_mode = 'TRANSPARENT'
 
     # Turn on cycles transparency
     scene.cycles.film_transparent = True
@@ -3952,6 +3953,12 @@ def setupInstructionsLook():
         layers[-1].use = True
         layerNames.append("TransparentBricks")
     transLayer = layerNames.index("TransparentBricks")
+
+    # Use Z layer (defaults to off in Blender 3.5.1)
+    if hasattr(layers[transLayer], "use_pass_z"):
+        layers[transLayer].use_pass_z = True
+    if hasattr(layers[solidLayer], "use_pass_z"):
+        layers[solidLayer].use_pass_z = True
 
     # Disable any render/view layers that are not needed
     for i in range(len(layers)):
