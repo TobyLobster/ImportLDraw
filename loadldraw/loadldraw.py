@@ -3598,7 +3598,11 @@ def createBlenderObjectsFromNode(node,
 
         # Add light to light bricks
         if (name in globalLightBricks):
-            lamp_data = bpy.data.lamps.new(name="LightLamp", type='POINT')
+            if isBlender28OrLater:
+                 lights = bpy.data.lights
+            else:
+                 lights = bpy.data.lamps
+            lamp_data = lights.new(name="LightLamp", type='POINT')
             lamp_data.shadow_soft_size = 0.05
             lamp_data.use_nodes = True
             emission_node = lamp_data.node_tree.nodes.get('Emission')
@@ -3606,7 +3610,7 @@ def createBlenderObjectsFromNode(node,
                 emission_node.inputs['Color'].default_value = globalLightBricks[name]
                 emission_node.inputs['Strength'].default_value = 100.0
             lamp_object = bpy.data.objects.new(name="LightLamp", object_data=lamp_data)
-            lamp_object.location = (-0.27, 0.18, 0.0)
+            lamp_object.location = (-0.27, 0.0, -0.18)
 
             addNodeToParentWithGroups(blenderNodeParent, [], lamp_object)
 
