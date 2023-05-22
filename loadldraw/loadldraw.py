@@ -351,8 +351,8 @@ globalLightBricks = {
 # Create a regular dictionary of parts with ranges of angles to check
 margin = 5 # Allow 5 degrees either way to compensate for measuring inaccuracies
 globalSlopeAngles = {}
-for part in globalSlopeBricks:
-    globalSlopeAngles[part] = {(c-margin, c+margin) if type(c) is not tuple else (min(c)-margin,max(c)+margin) for c in globalSlopeBricks[part]}
+for part, angles in globalSlopeBricks.items():
+    globalSlopeAngles[part] = {(c-margin, c+margin) if type(c) is not tuple else (min(c)-margin,max(c)+margin) for c in angles}
 
 # **************************************************************************************
 def internalPrint(message):
@@ -3389,10 +3389,7 @@ def isSlopeFace(slopeAngles, isGrainySlopeAllowed, faceVertices):
     # debugPrint("Angle to ground {0}".format(angleToGroundDegrees))
 
     # Step 3: Check angle of normal to ground is within one of the acceptable ranges for this part
-    if True in { c[0] <= angleToGroundDegrees <= c[1] for c in slopeAngles }:
-        return True
-
-    return False
+    return any(c[0] <= angleToGroundDegrees <= c[1] for c in slopeAngles)
 
 # **************************************************************************************
 def createMesh(name, meshName, geometry):
@@ -3778,7 +3775,7 @@ def setupRealisticLook():
         scene.world.use_nodes = True
         nodes = scene.world.node_tree.nodes
         links = scene.world.node_tree.links
-        worldNodeNames = list(map((lambda x: x.name), scene.world.node_tree.nodes))
+        worldNodeNames = [node.name for node in scene.world.node_tree.nodes]
 
         if "LegoEnvMap" in worldNodeNames:
             env_tex = nodes["LegoEnvMap"]
@@ -3854,7 +3851,7 @@ def setupRealisticLook():
         scene.use_nodes = True
 
         # If scene nodes exist for compositing instructions look, remove them
-        nodeNames = list(map((lambda x: x.name), scene.node_tree.nodes))
+        nodeNames = [node.name for node in scene.node_tree.nodes]
         if "Solid" in nodeNames:
            scene.node_tree.nodes.remove(scene.node_tree.nodes["Solid"])
 
@@ -4317,8 +4314,9 @@ def loadFromFile(context, filename, isFullFilepath=True):
 
     if node.file.isModel:
         # Fix top level rotation from LDraw coordinate space to Blender coordinate space
-        node.file.geometry.points = list(map((lambda p: matvecmul(Math.rotationMatrix, p)), node.file.geometry.points))
-        node.file.geometry.edges  = list(map((lambda e: matvecmul(Math.rotationMatrix, e)), node.file.geometry.edges))
+        node.file.geometry.points = [Math.rotationMatrix * p for p in node.file.geometry.points]
+        node.file.geometry.edges  = [(matvecmul(Math.rotationMatrix, e[0]), matvecmul(Math.rotationMatrix, e[1])) for e in node.file.geometry.edges]
+
         for childNode in node.file.childNodes:
             childNode.matrix = matmul(Math.rotationMatrix, childNode.matrix)
 
