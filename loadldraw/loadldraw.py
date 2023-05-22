@@ -295,19 +295,19 @@ globalSlopeBricks = {
     '4858':{72},
     '4861':{45, 63},
     '4871':{-45},
-    '4885':{72},
+    '4885':{72}, #blank
     '6069':{72, 45},
     '6153':{(60, 70), (26, 34)},
     '6227':{45},
     '6270':{45},
     '13269':{(40, 63)},
-    '13548':{45},
+    '13548':{(45, 35)},
     '15571':{45},
     '18759':{-45},
-    '22390':{(40, 55)},
+    '22390':{(40, 55)}, #blank
     '22391':{(40, 55)},
     '22889':{-45},
-    '28192':{45},
+    '28192':{45}, #blank
     '30180':{47},
     '30182':{45},
     '30183':{-45},
@@ -319,7 +319,7 @@ globalSlopeBricks = {
     '30390':{-45},
     '30499':{16},
     '32083':{45},
-    '43708':{72},
+    '43708':{(64, 72)},
     '43710':{72, 45},
     '43711':{72, 45},
     '47759':{(40, 63)},
@@ -4311,11 +4311,12 @@ def loadFromFile(context, filename, isFullFilepath=True):
     node.load()
     # node.printBFC()
 
-    # Fix top level rotation from LDraw coordinate space to Blender coordinate space
-    node.file.geometry.points = list(map((lambda p: matvecmul(Math.rotationMatrix, p)), node.file.geometry.points))
-    node.file.geometry.edges  = list(map((lambda e: (matvecmul(Math.rotationMatrix, e[0]), matvecmul(Math.rotationMatrix, e[1]))), node.file.geometry.edges))
-    for childNode in node.file.childNodes:
-        childNode.matrix = matmul(Math.rotationMatrix, childNode.matrix)
+    if node.file.isModel:
+        # Fix top level rotation from LDraw coordinate space to Blender coordinate space
+        node.file.geometry.points = list(map((lambda p: matvecmul(Math.rotationMatrix, p)), node.file.geometry.points))
+        node.file.geometry.edges  = list(map((lambda e: matvecmul(Math.rotationMatrix, e)), node.file.geometry.edges))
+        for childNode in node.file.childNodes:
+            childNode.matrix = matmul(Math.rotationMatrix, childNode.matrix)
 
     # Switch to Object mode and deselect all
     if bpy.ops.object.mode_set.poll():
@@ -4338,6 +4339,9 @@ def loadFromFile(context, filename, isFullFilepath=True):
     # Create Blender objects from the loaded file
     debugPrint("Creating Blender objects")
     rootOb = createBlenderObjectsFromNode(node, node.matrix, name)
+
+    if not node.file.isModel:
+        rootOb.data.transform(Math.rotationMatrix)
 
     scene  = bpy.context.scene
     camera = scene.camera
@@ -4366,8 +4370,8 @@ def loadFromFile(context, filename, isFullFilepath=True):
         # obj_cell = bpy.data.objects.new(name="convexHull", object_data=mesh_dst)
         # linkToScene(obj_cell)
 
-    # Centre object
-    if globalPoints:
+    # Centre object only if root node is a model
+    if node.file.isModel and globalPoints:
         # Calculate our bounding box in global coordinate space
         boundingBoxMin = mathutils.Vector((0, 0, 0))
         boundingBoxMax = mathutils.Vector((0, 0, 0))
@@ -4389,25 +4393,25 @@ def loadFromFile(context, filename, isFullFilepath=True):
             globalPoints = [p + offsetToCentreModel for p in globalPoints]
             offsetToCentreModel = mathutils.Vector((0, 0, 0))
 
-    if camera is not None:
-        if Options.positionCamera:
-            debugPrint("Positioning Camera")
+        if camera is not None:
+            if Options.positionCamera:
+                debugPrint("Positioning Camera")
 
-            # Set up a default camera position and rotation
-            camera.location = mathutils.Vector((6.5, -6.5, 4.75))
-            camera.rotation_mode = 'XYZ'
-            camera.rotation_euler = mathutils.Euler((1.0471975803375244, 0.0, 0.7853981852531433), 'XYZ')
+                # Set up a default camera position and rotation
+                camera.location = mathutils.Vector((6.5, -6.5, 4.75))
+                camera.rotation_mode = 'XYZ'
+                camera.rotation_euler = mathutils.Euler((1.0471975803375244, 0.0, 0.7853981852531433), 'XYZ')
 
-            # Must have at least three vertices to move the camera
-            if len(globalPoints) >= 3:
-                isOrtho = camera.data.type == 'ORTHO'
-                if isOrtho:
-                    iterateCameraPosition(camera, render, vcentre, True)
-                else:
-                    for i in range(20):
-                        error = iterateCameraPosition(camera, render, vcentre, True)
-                        if (error < 0.001):
-                            break
+                # Must have at least three vertices to move the camera
+                if len(globalPoints) >= 3:
+                    isOrtho = camera.data.type == 'ORTHO'
+                    if isOrtho:
+                        iterateCameraPosition(camera, render, vcentre, True)
+                    else:
+                        for i in range(20):
+                            error = iterateCameraPosition(camera, render, vcentre, True)
+                            if (error < 0.001):
+                                break
 
     # Get existing scene names
     sceneObjectNames = [x.name for x in scene.objects]
