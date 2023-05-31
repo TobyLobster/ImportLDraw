@@ -194,6 +194,12 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         default=prefs.get("curvedWalls", True)
     )
 
+    addSubsurface: BoolProperty(
+        name="Add subsurface",
+        description="Adds subsurface to principled shader",
+        default=prefs.get("addSubsurface", True)
+    )
+
     importCameras: BoolProperty(
         name="Import cameras",
         description="Import camera definitions (from models authored in LeoCAD)",
@@ -301,6 +307,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         box.prop(self, "colourScheme", expand=True)
         box.prop(self, "resPrims", expand=True)
         box.prop(self, "smoothParts")
+        box.prop(self, "addSubsurface")
         box.prop(self, "bevelEdges")
         box.prop(self, "bevelWidth")
         box.prop(self, "addGaps")
@@ -328,6 +335,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("scale",                 self.importScale)
         ImportLDrawOps.prefs.set("resolution",            self.resPrims)
         ImportLDrawOps.prefs.set("smoothShading",         self.smoothParts)
+        ImportLDrawOps.prefs.set("addSubsurface",         self.addSubsurface)
         ImportLDrawOps.prefs.set("bevelEdges",            self.bevelEdges)
         ImportLDrawOps.prefs.set("bevelWidth",            self.bevelWidth)
         ImportLDrawOps.prefs.set("useLook",               self.look)
@@ -369,6 +377,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.Options.gaps               = self.addGaps
         loadldraw.Options.gapWidth           = self.gapsSize
         loadldraw.Options.curvedWalls        = self.curvedWalls
+        loadldraw.Options.addSubsurface      = self.addSubsurface
         loadldraw.Options.importCameras      = self.importCameras
         loadldraw.Options.positionObjectOnGroundAtOrigin = self.positionOnGround
         loadldraw.Options.flattenHierarchy   = self.flatten

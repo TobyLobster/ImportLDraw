@@ -1989,8 +1989,9 @@ class BlenderMaterials:
     def __nodePrincipled(nodes, subsurface, sub_rad, metallic, roughness, clearcoat, clearcoat_roughness, ior, transmission, x, y):
         node = nodes.new('ShaderNodeBsdfPrincipled')
         node.location = x, y
-        node.inputs['Subsurface'].default_value = subsurface
-        node.inputs['Subsurface Radius'].default_value = mathutils.Vector( (sub_rad, sub_rad, sub_rad) )
+        if Options.addSubsurface:
+            node.inputs['Subsurface'].default_value = subsurface
+            node.inputs['Subsurface Radius'].default_value = mathutils.Vector( (sub_rad, sub_rad, sub_rad) )
         node.inputs['Metallic'].default_value = metallic
         node.inputs['Roughness'].default_value = roughness
         node.inputs['Clearcoat'].default_value = clearcoat
@@ -2655,7 +2656,8 @@ class BlenderMaterials:
                     node_main = BlenderMaterials.__nodePrincipled(group.nodes, 0.05, 0.05, 0.0, 0.1, 0.0, 0.0, 1.45, 0.0, 0, 0)
                     output_name = 'BSDF'
                     color_name = 'Base Color'
-                    group.links.new(node_input.outputs['Color'],        node_main.inputs['Subsurface Color'])
+                    if Options.addSubsurface:
+                        group.links.new(node_input.outputs['Color'],        node_main.inputs['Subsurface Color'])
                 else:
                     node_main = BlenderMaterials.__nodeDielectric(group.nodes, 0.2, 0.1, 0.0, 1.46, 0, 0)
                     output_name = 'Shader'
@@ -2857,7 +2859,8 @@ class BlenderMaterials:
 
             if BlenderMaterials.usePrincipledShader:
                 node_main = BlenderMaterials.__nodePrincipled(group.nodes, 1.0, 0.05, 0.0, 0.5, 0.0, 0.03, 1.45, 0.0, -242, 154+240)
-                group.links.new(node_input.outputs['Color'],     node_main.inputs['Subsurface Color'])
+                if Options.addSubsurface:
+                    group.links.new(node_input.outputs['Color'],     node_main.inputs['Subsurface Color'])
                 group.links.new(node_input.outputs['Color'],     node_emit.inputs['Color'])
                 main_colour = 'Base Color'
             else:
@@ -2936,7 +2939,8 @@ class BlenderMaterials:
                 group.links.new(node_sep_hsv.outputs['S'], node_com_hsv.inputs['S'])
                 group.links.new(node_sep_hsv.outputs['V'], node_multiply.inputs[0])
                 group.links.new(node_com_hsv.outputs['Color'], node_principled.inputs['Base Color'])
-                group.links.new(node_com_hsv.outputs['Color'], node_principled.inputs['Subsurface Color'])
+                if Options.addSubsurface:
+                    group.links.new(node_com_hsv.outputs['Color'], node_principled.inputs['Subsurface Color'])
                 group.links.new(node_tex_coord.outputs['Object'], node_tex_wave.inputs['Vector'])
                 group.links.new(node_tex_wave.outputs['Fac'], node_color_ramp.inputs['Fac'])
                 group.links.new(node_color_ramp.outputs['Color'], node_multiply.inputs[1])
@@ -3106,7 +3110,8 @@ class BlenderMaterials:
                 node_mix = BlenderMaterials.__nodeMix(group.nodes, 0.5, 65, -40)
 
                 group.links.new(node_input.outputs['Color'], node_principled.inputs['Base Color'])
-                group.links.new(node_input.outputs['Color'], node_principled.inputs['Subsurface Color'])
+                if Options.addSubsurface:
+                    group.links.new(node_input.outputs['Color'], node_principled.inputs['Subsurface Color'])
                 group.links.new(node_input.outputs['Normal'], node_principled.inputs['Normal'])
                 group.links.new(node_input.outputs['Normal'], node_translucent.inputs['Normal'])
                 group.links.new(node_principled.outputs[0], node_mix.inputs[1])
