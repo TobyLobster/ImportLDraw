@@ -79,7 +79,7 @@ class Preferences():
     def get(self, option, default):
         if not self.__prefsRead:
             return default
-        
+
         if type(default) is bool:
             return self.__config.getboolean(Preferences.__sectionName, option, fallback=default)
         elif type(default) is float:
@@ -217,11 +217,17 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         description="The object is centred at the origin, and on the ground plane",
         default=prefs.get("positionObjectOnGroundAtOrigin", True)
     )
-    
+
     flatten: BoolProperty(
         name="Flatten tree",
         description="In Scene Outliner, all parts are placed directly below the root - there's no tree of submodels",
         default=prefs.get("flattenHierarchy", False)
+    )
+
+    minifigHierarchy: BoolProperty(
+        name="Parent Minifigs",
+        description="Add a parent/child hierarchy (tree) for Minifigs",
+        default=prefs.get("minifigHierarchy", True)
     )
 
     useUnofficialParts: BoolProperty(
@@ -257,7 +263,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         description="Adds a Bevel modifier for rounding off sharp edges",
         default=prefs.get("bevelEdges", True)
     )
-    
+
     bevelWidth: FloatProperty(
         name="Bevel Width",
         description="Width of the bevelled edges",
@@ -269,7 +275,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         description="Adds a ground plane and environment texture (for realistic look only)",
         default=prefs.get("addEnvironment", True)
     )
-    
+
     positionCamera: BoolProperty(
         name="Position the camera",
         description="Position the camera to show the whole model",
@@ -287,7 +293,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
 
         layout = self.layout
         layout.use_property_split = True # Active single-column layout
-        
+
         box = layout.box()
         box.label(text="Import Options", icon='PREFERENCES')
         box.label(text="LDraw filepath:", icon='FILEBROWSER')
@@ -316,6 +322,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         box.prop(self, "positionOnGround")
         box.prop(self, "numberNodes")
         box.prop(self, "flatten")
+        box.prop(self, "minifigHierarchy")
 
         box.label(text="Resolve Ambiguous Normals:", icon='ORIENTATION_NORMAL')
         box.prop(self, "resolveNormals", expand=True)
@@ -340,6 +347,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("numberNodes",           self.numberNodes)
         ImportLDrawOps.prefs.set("positionObjectOnGroundAtOrigin", self.positionOnGround)
         ImportLDrawOps.prefs.set("flattenHierarchy",      self.flatten)
+        ImportLDrawOps.prefs.set("minifigHierarchy",      self.minifigHierarchy)
         ImportLDrawOps.prefs.set("useUnofficialParts",    self.useUnofficialParts)
         ImportLDrawOps.prefs.set("useLogoStuds",          self.useLogoStuds)
         ImportLDrawOps.prefs.set("instanceStuds",         self.instanceStuds)
@@ -354,31 +362,32 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.hasCollections = hasattr(bpy.data, "collections")
 
         # Set import options and import
-        loadldraw.Options.ldrawDirectory     = self.ldrawPath
-        loadldraw.Options.scale              = self.importScale
-        loadldraw.Options.useUnofficialParts = self.useUnofficialParts
-        loadldraw.Options.resolution         = self.resPrims
-        loadldraw.Options.defaultColour      = "4"
-        loadldraw.Options.createInstances    = self.linkParts
-        loadldraw.Options.instructionsLook   = self.look == "instructions"
-        loadldraw.Options.useColourScheme    = self.colourScheme
-        loadldraw.Options.numberNodes        = self.numberNodes
-        loadldraw.Options.removeDoubles      = True
-        loadldraw.Options.smoothShading      = self.smoothParts
-        loadldraw.Options.edgeSplit          = self.smoothParts     # Edge split is appropriate only if we are smoothing
-        loadldraw.Options.gaps               = self.addGaps
-        loadldraw.Options.gapWidth           = self.gapsSize
-        loadldraw.Options.curvedWalls        = self.curvedWalls
-        loadldraw.Options.importCameras      = self.importCameras
+        loadldraw.Options.ldrawDirectory             = self.ldrawPath
+        loadldraw.Options.scale                      = self.importScale
+        loadldraw.Options.useUnofficialParts         = self.useUnofficialParts
+        loadldraw.Options.resolution                 = self.resPrims
+        loadldraw.Options.defaultColour              = "4"
+        loadldraw.Options.createInstances            = self.linkParts
+        loadldraw.Options.instructionsLook           = self.look == "instructions"
+        loadldraw.Options.useColourScheme            = self.colourScheme
+        loadldraw.Options.numberNodes                = self.numberNodes
+        loadldraw.Options.removeDoubles              = True
+        loadldraw.Options.smoothShading              = self.smoothParts
+        loadldraw.Options.edgeSplit                  = self.smoothParts     # Edge split is appropriate only if we are smoothing
+        loadldraw.Options.gaps                       = self.addGaps
+        loadldraw.Options.gapWidth                   = self.gapsSize
+        loadldraw.Options.curvedWalls                = self.curvedWalls
+        loadldraw.Options.importCameras              = self.importCameras
         loadldraw.Options.positionObjectOnGroundAtOrigin = self.positionOnGround
-        loadldraw.Options.flattenHierarchy   = self.flatten
-        loadldraw.Options.useLogoStuds       = self.useLogoStuds
-        loadldraw.Options.logoStudVersion    = "4"
-        loadldraw.Options.instanceStuds      = self.instanceStuds
-        loadldraw.Options.useLSynthParts     = True
-        loadldraw.Options.LSynthDirectory    = os.path.join(os.path.dirname(__file__), "lsynth")
-        loadldraw.Options.studLogoDirectory  = os.path.join(os.path.dirname(__file__), "studs")
-        loadldraw.Options.resolveAmbiguousNormals = self.resolveNormals
+        loadldraw.Options.flattenHierarchy           = self.flatten
+        loadldraw.Options.minifigHierarchy           = self.minifigHierarchy
+        loadldraw.Options.useLogoStuds               = self.useLogoStuds
+        loadldraw.Options.logoStudVersion            = "4"
+        loadldraw.Options.instanceStuds              = self.instanceStuds
+        loadldraw.Options.useLSynthParts             = True
+        loadldraw.Options.LSynthDirectory            = os.path.join(os.path.dirname(__file__), "lsynth")
+        loadldraw.Options.studLogoDirectory          = os.path.join(os.path.dirname(__file__), "studs")
+        loadldraw.Options.resolveAmbiguousNormals    = self.resolveNormals
         loadldraw.Options.overwriteExistingMaterials = False
         loadldraw.Options.overwriteExistingMeshes    = False
         loadldraw.Options.addBevelModifier           = self.bevelEdges and not loadldraw.Options.instructionsLook
