@@ -18,7 +18,7 @@
 #       <list of attach points (LDraw coordinates)>
 #       <list of child lego part numbers>
 #
-# A list of child objects can be reused under different parents by first
+# A list of child part numbers can be reused under different parents by first
 # defining a group:
 #
 #   Group <name of group>:
@@ -397,12 +397,12 @@ Parent 92241: # Figure Friends Girl Torso
      FriendsTorsoChildren
 
 Parent 92242: # Figure Friends Man Torso
-    0   -33.2   0               # head attach point
-    0   -36.1   0               # head attach point
-    11    0     0               # left arm attach point
-   -11    0     0               # right arm attach point
-    0    29.4  -1.2             # hips attach point
-    0    47.4  -2.7             # legs attach point
+      0   -33.2   0             # head attach point
+      0   -36.1   0             # head attach point
+     11     0     0             # left arm attach point
+    -11     0     0             # right arm attach point
+      0    29.4  -1.2           # hips attach point
+      0    -2.7 -47.4           # legs attach point
     FriendsTorsoChildren
 
 Parent 92243: # Figure Friends Woman Torso
