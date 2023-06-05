@@ -4512,6 +4512,21 @@ def iterateCameraPosition(camera, render, vcentre3d, moveCamera):
     return 0.0
 
 # **************************************************************************************
+def getConvexHull(minPoints = 3):
+    global globalPoints
+
+    if len(globalPoints) >= minPoints:
+        bm = bmesh.new()
+        [bm.verts.new(v) for v in globalPoints]
+        bm.verts.ensure_lookup_table()
+
+        ret = bmesh.ops.convex_hull(bm, input=bm.verts, use_existing_faces=False)
+        globalPoints = [vert.co.copy() for vert in ret["geom"] if isinstance(vert, bmesh.types.BMVert)]
+        del ret
+        bm.clear()
+        bm.free()
+
+# **************************************************************************************
 def loadFromFile(context, filename, isFullFilepath=True):
     global globalCamerasToAdd
     global globalContext
@@ -4600,24 +4615,8 @@ def loadFromFile(context, filename, isFullFilepath=True):
 
     # Take the convex hull of all the points in the scene (operation must have at least three vertices)
     # This results in far fewer points to consider when adjusting the object and/or camera position.
-    if len(globalPoints) >= 3:
-        bm = bmesh.new()
-        [bm.verts.new(v) for v in globalPoints]
-        bm.verts.ensure_lookup_table()
-
-        ret = bmesh.ops.convex_hull(bm, input=bm.verts, use_existing_faces=False)
-        globalPoints = [vert.co.copy() for vert in ret["geom"] if isinstance(vert, bmesh.types.BMVert)]
-        del ret
-        bm.clear()
-        bm.free()
-
-        debugPrint("Number of vertices of convex hull: " + str(len(globalPoints)))
-
-        # Put convex hull back into scene - for testing purposes
-        # mesh_dst = bpy.data.meshes.new(name="convexHull")
-        # bm.to_mesh(mesh_dst)
-        # obj_cell = bpy.data.objects.new(name="convexHull", object_data=mesh_dst)
-        # linkToScene(obj_cell)
+    getConvexHull()
+    debugPrint("Number of convex hull vertices: " + str(len(globalPoints)))
 
     # Centre object only if root node is a model
     if node.file.isModel and globalPoints:

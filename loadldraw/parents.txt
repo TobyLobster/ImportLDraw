@@ -1,31 +1,73 @@
 ##############################################################################
 #
-# Parent-child relationhips of lego pieces
+# Parent-child Relationships of Lego Pieces
+# -----------------------------------------
+#
+# This document specifies parent Lego parts and their child Lego parts.
+# It also specifies 'attach points', i.e. where on the parent part that a
+# child can be attached. Specifically it is the offset from the origin of
+# the parent to the origin of the child.
+#
+# File Format
+# -----------
 #
 # In this document a '#' starts a comment. The rest of the line is ignored.
 # Lines containing only whitespace are also ignored.
 #
-# Starts with 'Parent ', followed by a parent lego part number, followed by a
-# colon. Next is a list of the possible attach points where the child parts
-# can attach (relative to the parent, one per line). Spaces separate the
-# coordinates. Finally there's a list of the part numbers of the children
-# that can be attached. All lists have one entry per line. Indentation is
-# optional, but preferred.
+# A parent-child relationship starts with 'Parent ', followed by a parent
+# Lego part number, followed by a colon. The following lines are list of the
+# possible attach points where the child parts can attach (relative to the
+# parent, one per line). Spaces separate coordinates. Finally there's a
+# list of the part numbers of the children that can be attached. All lists
+# have one entry per line. Indentation is optional, but preferred.
 #
 # In other words:
 #
-#   Parent <parent lego part number>:
-#       <list of attach points (LDraw coordinates)>
-#       <list of child lego part numbers>
+#   Parent <parent Lego part number>:
+#       <list of attach points (see below for how to find these)>
+#       <list of child Lego part numbers>
 #
 # A list of child part numbers can be reused under different parents by first
 # defining a group:
 #
 #   Group <name of group>:
-#       <list of child lego part numbers>
+#       <list of child Lego part numbers>
 #
-# Groups are used by specifying the group name among the list of child part
+# Groups are used by specifying the <name of group> among the list of child part
 # numbers.
+#
+# How to get attach points
+# ------------------------
+#
+# Import a model into Blender. Copy and paste the following into the
+# 'Python Interactive Console' in Blender (without the leading # characters):
+#
+#def debugRelative():
+#    def friendly(f):
+#        result = '{:.4f}'.format(f).rstrip('0')
+#        if result[-1] == '.':
+#            result = result[0:-1]
+#        if result == "-0":
+#            result = "0"
+#        return result
+#    child =  bpy.context.active_object
+#    if child == bpy.context.selected_objects[0]:
+#        parent = bpy.context.selected_objects[1]
+#    else:
+#        parent = bpy.context.selected_objects[0]
+#    print("Parent: %s" % (parent.name,))
+#    print("Child : %s" % (child.name,))
+#    offset = 100 * parent.matrix_world.inverted() @ child.matrix_world.to_translation()
+#    print('%s %s %s' % (friendly(offset.x),friendly(offset.y),friendly(offset.z)))
+#
+# Press Return twice to accept the code. Now you are ready to start finding attach
+# points. Select the parent part, then add the child part to the selection (in that
+# order). In the Interactive Console type:
+#
+# debugRelative()
+#
+# and press Return. You should see the parent and child part names listed along
+# with the three attach point coordinates.
 #
 ##############################################################################
 
@@ -235,6 +277,7 @@ Group FriendsHair:
     96484                       # Figure Friends Hair Dryer
     92254                       # Figure Friends Hair Long with Ponytail, Side Bangs and Horse Riding Helmet
     92255                       # Figure Friends Hair Long Straight
+    92259                       # Figure Friends Hair Short, Bob Cut
 
 ##############################################################################
 #
@@ -313,17 +356,29 @@ Parent 3820: # hand
     -0.1903  -1.37    -9.4321   # radio with long handle attach point
     -0.0292 -18.6122 -14.2941   # bar with clip attach point
      0      -27.7451 -16.8451   # goblet/oar attach point
-     0       -0.6379  -9.8353   # gun flintlock pistol attach point
+     0       -0.6379  -9.8353   # gun flintlock pistol attach point / lance attach point
      0       -2.5746 -10.3352   # sword cutlass attach point
      0.0004 -25.8089 -16.3445   # oar attach point
      0      -28.3085 -42.8774   # gun musket attach point
-    3962                        # Minifig Radio
-    48729                       # Bar 1.5L with Clip
+     0       14.6628  -5.8898   # paint brush attach point
+     0      -10.319  -12.3384   # shield triangular attach point
+     0        1.8796  -9.1834   # bow with arrow attach point
+     0        4.3967  -8.5325   # bow with arrow attach point (with arrow in other hand)
+     0      -43.236  -20.8515   # spear with round end attach point
+     0      -45.1723 -21.3522   # spear with round end attach point (held slightly further down)
     2343                        # Minifig Goblet
-    2562                        # Minifig Gun Flintlock Pistol
     2530                        # Minifig Sword Cutlass
     2542                        # Minifig Tool Oar
     2561                        # Minifig Gun Musket
+    2562                        # Minifig Gun Flintlock Pistol
+    3846                        # Minifig Shield Triangular
+    3849                        # Minifig Lance
+    3962                        # Minifig Radio
+    4497                        # Minifig Spear with Round End
+    4499                        # Minifig Bow with Arrow
+    48729                       # Bar 1.5L with Clip
+    93551                       # Minifig Paint Palette
+    93552                       # Minifig Paint Brush
 
 Parent 6260: # skeleton torso
     0 -24 0                     # skeleton head attach point
