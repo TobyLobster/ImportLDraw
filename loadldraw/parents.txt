@@ -366,19 +366,34 @@ Parent 3820: # hand
      0        4.3967  -8.5325   # bow with arrow attach point (with arrow in other hand)
      0      -43.236  -20.8515   # spear with round end attach point
      0      -45.1723 -21.3522   # spear with round end attach point (held slightly further down)
+     0       -1.3031 -10.0196   # suitcase attach point
+     5.0276  -9.0556 -32.0066   # cup attach point
+    -0.0071   1.1162  -9.4039   # bar 3L attach point
+     0.0076  -1.8049 -10.1498   # suitcase with long handle attach point
+    -1.9531   2.0054 -28.9541   # newspaper attach point
+    -0.0034  -0.8222  -9.8935   # handcuffs attach point / radio with large grille
+     0.0041 -15.8223 -13.7717   # Bar 1.5L with Clip
     2343                        # Minifig Goblet
     2530                        # Minifig Sword Cutlass
     2542                        # Minifig Tool Oar
     2561                        # Minifig Gun Musket
     2562                        # Minifig Gun Flintlock Pistol
+    3068                        # Tile 2x2 (for newspaper)
     3846                        # Minifig Shield Triangular
     3849                        # Minifig Lance
+    3899                        # Minifig Cup
     3962                        # Minifig Radio
     4497                        # Minifig Spear with Round End
+    4449                        # Minifig Suitcase (closed)
     4499                        # Minifig Bow with Arrow
+    19220                       # Minifig Radio with Large Grille
+    37178                       # Minifig Suitcase with Long Handle (closed)
     48729                       # Bar 1.5L with Clip
+    61482                       # Minifig Handcuffs
+    87994                       # Bar 3L
     93551                       # Minifig Paint Palette
     93552                       # Minifig Paint Brush
+
 
 Parent 6260: # skeleton torso
     0 -24 0                     # skeleton head attach point
