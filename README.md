@@ -32,6 +32,7 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 + **Smart face smoothing** - Uses Edge-Split Modifier and Sharp Edges derived from Ldraw lines, for smooth curved surfaces and sharp corners.
 + **Concave walls** - Optionally look as if each brick has very slightly concave walls (with the photorealistic renderer), which affects the look of light reflections.
 + **Light bricks** - Bricks that emit light are supported.
++ **Parenting for Minifigs** - Optionally make the parts of a minifig parented to each other, so e.g. rotating the arm also moves the hand with it.
 + **Fast** - even large models can be imported in seconds.
 
 ![Ghostbusters](./images/ghostbusters_960.png)
@@ -54,6 +55,7 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 **Setting the LDraw Parts Library directory**
 
 + Download the latest complete [LDraw Parts Library](http://ldraw.org/parts/latest-parts.html) and unzip it to a directory e.g. called 'ldraw'.
++ (Note there currently seems to be an issue if the path to the ldraw directory contains spaces, so avoid using spaces in the full path to the ldraw directory.).
 + OPTIONAL: Download the unofficial parts and unzip it to sub-directory 'ldraw/unofficial/'
 + From the Blender menu click: File > Import > LDraw (.mpd/.ldr/.l3b/.dat).
 + In the bottom left of Blender's window, there's a panel of *Import Options*.
