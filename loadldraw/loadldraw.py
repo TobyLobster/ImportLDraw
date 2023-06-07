@@ -4661,7 +4661,7 @@ def loadFromFile(context, filename, isFullFilepath=True):
                             if (error < 0.001):
                                 break
 
-    # Get existing scene names
+    # Get existing object names
     sceneObjectNames = [x.name for x in scene.objects]
 
     # Remove default objects
@@ -4697,7 +4697,7 @@ def loadFromFile(context, filename, isFullFilepath=True):
     # Select the newly created root object
     selectObject(rootOb)
 
-    # Get existing scene names
+    # Get existing object names
     sceneObjectNames = [x.name for x in scene.objects]
 
     # Add ground plane with white material
