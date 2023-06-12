@@ -1,2 +1,2 @@
 # -*- coding: utf-8 -*-
-version = (1, 1, 17)
+version = (1, 1, 18)
