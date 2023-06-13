@@ -1641,8 +1641,11 @@ class LDrawFile:
                         bfcInvertNext = not bfcInvertNext
                     canCullChildNode = (self.bfcCertified or self.isModel) and bfcLocalCull and (det != 0)
 
-                    newNode = LDrawNode(new_filename, False, self.fullFilepath, new_colourName, localMatrix, canCullChildNode, bfcInvertNext, processingLSynthParts, not self.isModel, False, currentGroupNames)
-                    self.childNodes.append(newNode)
+                    if new_filename != "":
+                        newNode = LDrawNode(new_filename, False, self.fullFilepath, new_colourName, localMatrix, canCullChildNode, bfcInvertNext, processingLSynthParts, not self.isModel, False, currentGroupNames)
+                        self.childNodes.append(newNode)
+                    else:
+                        printWarningOnce("In file '{0}', the line '{1}' is not formatted corectly (ignoring).".format(self.fullFilepath, line))
 
                 # Parse an edge
                 elif parameters[0] == "2":
@@ -3047,19 +3050,6 @@ class BlenderMaterials:
         BlenderMaterials.__createBlenderLegoSpeckleNodeGroup()
         BlenderMaterials.__createBlenderLegoMilkyWhiteNodeGroup()
 
-
-# **************************************************************************************
-def point_to_line_segment_dist_squared(p, a, b):
-    ab = b - a
-    ab_length_squared = ab.dot(ab)
-    if (ab_length_squared < epsilon):
-        t = 0.5
-    else:
-        ap = p - a
-        t = ap.dot(ab) / ab_length_squared
-        t = max(0, min(t, 1))
-    c = p - (a + t * ab)
-    return c.dot(c)
 
 # **************************************************************************************
 def addSharpEdges(bm, geometry, filename):

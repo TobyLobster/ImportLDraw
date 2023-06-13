@@ -298,6 +298,7 @@ Parent 973: # Torso
     3815                        # Minifig Hips
     3818                        # Minifig Arm Right
     3819                        # Minifig Arm Left
+    3838                        # Minifig Airtanks
     4498                        # Minifig Arrow Quiver
     4524                        # Minifig Cape
     2524                        # Minifig Backpack Non-Opening
@@ -419,6 +420,10 @@ Parent 82359: # skeleton head
 
     6158                        # Minifig Fire Helmet Breathing Hose
     15553                       # Minifig Headdress Batgirl
+
+Parent 25128: # Minifig Baby
+    0 -0.9273 0                 # Head attach point
+    100662                      # Minifig baby head
 
 ##############################################################################
 #
