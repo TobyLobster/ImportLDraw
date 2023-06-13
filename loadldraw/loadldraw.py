@@ -1329,8 +1329,8 @@ class LDrawCamera:
 
     def __init__(self):
         self.vert_fov_degrees = 30.0
-        self.near             = 25.0
-        self.far              = 50000.0
+        self.near             = 0.01
+        self.far              = 100.0
         self.position         = mathutils.Vector((0.0, 0.0, 0.0))
         self.target_position  = mathutils.Vector((1.0, 0.0, 0.0))
         self.up_vector        = mathutils.Vector((0.0, 1.0, 0.0))
@@ -1348,8 +1348,9 @@ class LDrawCamera:
         camera.data.angle = self.vert_fov_degrees * 3.1415926 / 180.0
         camera.data.clip_end = self.far
         camera.data.clip_start = self.near
-        camera.hide = self.hidden
+        camera.hide_set(self.hidden)
         self.hidden = False
+
         if self.orthographic:
             dist_target_to_camera = (self.position - self.target_position).length
             camera.data.ortho_scale = dist_target_to_camera / 1.92
@@ -4343,9 +4344,12 @@ def loadFromFile(context, filename, isFullFilepath=True):
     # 1. The size of Lego pieces:
     #
     # Lego scale: https://www.lugnet.com/~330/FAQ/Build/dimensions
-    # 1 Lego draw unit = 0.4 mm, in an idealised world.
-    # In real life, actual Lego pieces have been measured as 0.3993 mm,
-    # but 0.4mm is close enough for all practical purposes.
+    #
+    #   1 Lego draw unit = 0.4 mm, in an idealised world.
+    #
+    # In real life, actual Lego pieces have been measured as 0.3993 mm +/- 0.0002,
+    # which makes 0.4mm accurate enough for all practical purposes (The difference
+    # being just 7 microns).
     #
     # 2. Blender coordinates:
     #
@@ -4356,13 +4360,13 @@ def loadFromFile(context, filename, isFullFilepath=True):
     # This calculation does not adjust for any gap between the pieces.
     # This is (optionally) done later in the calculations, where we
     # reduce the size of each piece by 0.2mm (default amount) to allow
-    # for a small gap between pieces.
+    # for a small gap between pieces. This matches real piece sizes.
     #
     # 3. Blender Scene Unit Scale:
     #
     # Blender has a 'Scene Unit Scale' value which by default is set
     # to 1.0. By changing the 'Unit Scale' after import the size of
-    # the whole scene can be adjusted.
+    # everything in the scene can be adjusted.
 
     globalScaleFactor = 0.0004 * Options.realScale
     globalWeldDistance = 0.01 * globalScaleFactor
@@ -4474,11 +4478,20 @@ def loadFromFile(context, filename, isFullFilepath=True):
         boundingBoxMax[1] = max(p[1] for p in globalPoints)
         boundingBoxMax[2] = max(p[2] for p in globalPoints)
 
+        # Length of bounding box diagonal
+        boundingBoxDistance = (boundingBoxMax - boundingBoxMin).length
+        boundingBoxCentre = (boundingBoxMax + boundingBoxMin) * 0.5
+
         vcentre = (boundingBoxMin + boundingBoxMax) * 0.5
         offsetToCentreModel = mathutils.Vector((-vcentre.x, -vcentre.y, -boundingBoxMin.z))
         if Options.positionObjectOnGroundAtOrigin:
             debugPrint("Centre object")
             rootOb.location += offsetToCentreModel
+
+            # Offset bounding box
+            boundingBoxMin += offsetToCentreModel
+            boundingBoxMax += offsetToCentreModel
+            boundingBoxCentre += offsetToCentreModel
 
             # Offset all points
             globalPoints = [p + offsetToCentreModel for p in globalPoints]
@@ -4488,8 +4501,10 @@ def loadFromFile(context, filename, isFullFilepath=True):
             if Options.positionCamera:
                 debugPrint("Positioning Camera")
 
+                camera.data.clip_start = 25 * globalScaleFactor            # 0.01 at normal scale
+                camera.data.clip_end   = 250000 * globalScaleFactor        # 100 at normal scale
+
                 # Set up a default camera position and rotation
-                boundingBoxDistance = (boundingBoxMax - boundingBoxMin).length
                 camera.location = mathutils.Vector((6.5, -6.5, 4.75))
                 camera.location.normalize()
                 camera.location = camera.location * boundingBoxDistance
@@ -4506,6 +4521,16 @@ def loadFromFile(context, filename, isFullFilepath=True):
                             error = iterateCameraPosition(camera, render, vcentre, True)
                             if (error < 0.001):
                                 break
+
+        # Find the (first) 3D View, then set the view's 'look at' and 'distance'
+        # Note: Not a camera object, but the point of view in the UI.
+        areas = [area for area in bpy.context.window.screen.areas if area.type == 'VIEW_3D']
+        if len(areas) > 0:
+            area = areas[0]
+            with bpy.context.temp_override(area=area):
+                view3d = bpy.context.space_data
+                view3d.region_3d.view_location = boundingBoxCentre      # Where to look at
+                view3d.region_3d.view_distance = boundingBoxDistance    # How far from target
 
     # Get existing object names
     sceneObjectNames = [x.name for x in scene.objects]
