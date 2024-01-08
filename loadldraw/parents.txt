@@ -1,0 +1,503 @@
+##############################################################################
+#
+# Parent-child Relationships of Lego Pieces
+# -----------------------------------------
+#
+# This document specifies parent Lego parts and their child Lego parts.
+# It also specifies 'attach points', i.e. where on the parent part that a
+# child can be attached. Specifically it is the offset from the origin of
+# the parent to the origin of the child.
+#
+# File Format
+# -----------
+#
+# In this document a '#' starts a comment. The rest of the line is ignored.
+# Lines containing only whitespace are also ignored.
+#
+# A parent-child relationship starts with 'Parent ', followed by a parent
+# Lego part number, followed by a colon. The following lines are list of the
+# possible attach points where the child parts can attach (relative to the
+# parent, one per line). Spaces separate coordinates. Finally there's a
+# list of the part numbers of the children that can be attached. All lists
+# have one entry per line. Indentation is optional, but preferred.
+#
+# In other words:
+#
+#   Parent <parent Lego part number>:
+#       <list of attach points (see below for how to find these)>
+#       <list of child Lego part numbers>
+#
+# A list of child part numbers can be reused under different parents by first
+# defining a group:
+#
+#   Group <name of group>:
+#       <list of child Lego part numbers>
+#
+# Groups are used by specifying the <name of group> among the list of child part
+# numbers.
+#
+# How to get attach points
+# ------------------------
+#
+# Import a model into Blender. Copy and paste the following into the
+# 'Python Interactive Console' in Blender (without the leading # characters):
+#
+#def debugRelative():
+#    def friendly(f):
+#        result = '{:.4f}'.format(f).rstrip('0')
+#        if result[-1] == '.':
+#            result = result[0:-1]
+#        if result == "-0":
+#            result = "0"
+#        return result
+#    child =  bpy.context.active_object
+#    if child == bpy.context.selected_objects[0]:
+#        parent = bpy.context.selected_objects[1]
+#    else:
+#        parent = bpy.context.selected_objects[0]
+#    print("Parent: %s" % (parent.name,))
+#    print("Child : %s" % (child.name,))
+#    offset = 100 * parent.matrix_world.inverted() @ child.matrix_world.to_translation()
+#    print('%s %s %s' % (friendly(offset.x),friendly(offset.y),friendly(offset.z)))
+#
+# Press Return twice to accept the code. Now you are ready to start finding attach
+# points. Select the parent part, then add the child part to the selection (in that
+# order). In the Interactive Console type:
+#
+# debugRelative()
+#
+# and press Return. You should see the parent and child part names listed along
+# with the three attach point coordinates.
+#
+##############################################################################
+
+Group MinifigHair:
+    3625                        # Minifig Hair Female with Pigtails
+    3901                        # Minifig Hair Male
+    4530                        # Minifig Hair Shoulder Length
+    6025                        # Minifig Hair Islander
+    6093                        # Minifig Hair Ponytail
+    6132                        # Minifig Hair Beard
+    10048                       # Minifig Hair Tousled
+    10066                       # Minifig Hair Orc with Ears
+    11255                       # Minifig Hair Long with Curls
+    11256                       # Minifig Hair Short, Wavy with Side Part
+    12889                       # Minifig Hair with Snakes
+    13251                       # Minifig Hair Female with Elaborate Knot Bun
+    15427                       # Minifig Hair Ponytail Off-centre
+    15443                       # Minifig Hair with  2 Locks on Left Side
+    15503                       # Minifig Hair Female Beehive Style with Sideways Fringe
+    16175                       # Minifig Construction Helmet with Hair Short
+    16178                       # Minifig Construction Helmet with Hair Ponytail
+    17630                       # Minifig Hair Straight Cut with Short Ponytail
+    18835                       # Minifig Hair Mid-Length Straight with Crown
+    19201                       # Figure Elves Hair Long Wavy with Braid, Bangs and Ears
+    19203                       # Figure Elves Hair Short Spiked with Ears
+    19204                       # Figure Elves Hair Long Wavy with Ears
+    20592                       # Minifig Hair Mid-Length Flipped Ends with Cat Ears
+    20595                       # Minifig Hair Long Tousled with Centre Parting
+    20597                       # Minifig Hair Short Tousled with Side Part and Lock Sticking Up
+    20877                       # Minifig Hair Female Short Swept Sideways
+    21268                       # Minifig Hair Short Swept Back with Sideburns and Widow's Peak
+    21269                       # Minifig Hair Swept Back with Widow's Peak, Chin-Length and Bushy in Back
+    21778                       # Minifig Hair Coiled
+    23186                       # Minifig Hair Swept Left Tousled
+    26139                       # Minifig Hair Short Wavy with Centre Parting
+    27186                       # Minifig Hair with Large High Bun
+    28145                       # Minifig Hair Wavy Parted with Large Thick Glasses
+    28551                       # Minifig Hair Bushy Swept Back
+    29633                       # Minifig Hair Bob Cut Parted in Middle
+    29634                       # Minifig Hair Female Very Curly - Parted in Middle
+    30409                       # Minifig Hair with Two Buns
+    30475                       # Minifig Hair Long and Half Braided (Needs Work)
+    30608                       # Minifig Hair Flat Top
+    32602                       # Minifig Hair Wavy Windblown to One Side
+    35660                       # Minifig Hair with Ponytail and Baseball Cap
+    40233                       # Minifig Hair Short Tousled
+    40239                       # Minifig Hair Long Straight
+    40240                       # Minifig Hair Short Bowl Cut
+    40251                       # Minifig Hair Long Wavy
+    41612                       # Minifig Hair Long and Straight Parted in the Middle
+    42444                       # Minifig Hair Peaked
+    43751                       # Minifig Hair Wavy
+    44740                       # Minifig Hair Decoration Plume Ribbon
+    53981                       # Minifig Hair Spiky Short
+    53982                       # Minifig Hair Spiky Long
+    59362                       # Minifig Hair Short with Curled Ends
+    59363                       # Minifig Hair Long with French Braid
+    61183                       # Minifig Hair Swept Back Tousled
+    61196                       # Minifig Hair Obi Wan
+    62696                       # Minifig Hair Ponytail with Long Bangs
+    62711                       # Minifig Hair Short Bob Cut
+    62810                       # Minifig Hair Short, Tousled with Side Parting
+    64798                       # Minifig Hair Backslick
+    80577                       # Minifig Hair Long Wavy with Knit Ski Cap
+    85974                       # Minifig Hair Long with One Front Lock
+    87990                       # Minifig Hair with Ponytail and Swept Sideways Fringe
+    87991                       # Minifig Hair Tousled with Side Parting
+    87995                       # Minifig Hair Bubble Style (Afro)
+    88283                       # Minifig Hair Mid-Length Tousled with Centre Parting
+    88286                       # Minifig Hair Female Ponytail with Long French Braid
+    92081                       # Minifig Hair Combed Front to Rear
+    92083                       # Minifig Hair Female Long Straight with Left Side Parting
+    92746                       # Minifig Hair Tousled and Layered
+    92756                       # Minifig Hair Pulled Back
+    93563                       # Minifig Hair Mohawk
+    95328                       # Minifig Hair Mid-Length Smooth Wide Bob Cut
+    98371                       # Minifig Hair Rocker with Sideburns
+    98385                       # Minifig Hair Spiked
+    98726                       # Minifig Hair Swept Right with Front Curl
+    99240                       # Minifig Hair Swept Back Into Bun
+    99930                       # Minifig Hair Short Combed Sideways with Left Parting
+
+Group MinifigHelmets:
+    769                         # Minifig Helmet Visor Space
+    2446                        # Minifig Helmet Modern
+    2447                        # Minifig Helmet Visor
+    2594                        # Minifig Helmet Visor Pointed
+    3833                        # Minifig Construction Helmet
+    3834                        # Minifig Fire Helmet
+    3842                        # Minifig Helmet Classic
+    3843                        # Minifig Helmet Visor with Grille and Feather
+    3844                        # Minifig Helmet Castle with Neck Protector
+    3896                        # Minifig Helmet Castle with Chin-Guard
+    4503                        # Minifig Helmet Castle with Fixed Face Grille
+    6088                        # Minifig Helmet with Underwater Antenna and Clips
+    6090                        # Minifig Helmet Visor Underwater
+    6119                        # Minifig Helmet Visor Ice Planet
+    6122                        # Minifig Helmet Castle with Dragon Crown Top
+    10051                       # Minifig Helmet Castle Uruk-Hai with Lateral Comb
+    10054                       # Minifig Helmet Castle Rohan with Cheek Protection & Comb
+    10305                       # Minifig Helmet with Front Prongs
+    10907                       # Minifig Helmet Iron Man
+    10908                       # Minifig Helmet Visor Iron Man
+    11217                       # Minifig Helmet SW Clone Trooper Phase 2
+    11437                       # Minifig Helmet Ornament Horn Elaborate
+    12899                       # Minifig Helmet Sport with Front Handle
+    13789                       # Minifig Police Helmet
+    13792                       # Minifig Helmet Welding
+    15851                       # Minifig Helmet Motorcycle with Open Face and Visor
+    16175                       # Minifig Construction Helmet with Hair Short
+    16178                       # Minifig Construction Helmet with Hair Ponytail
+    16599                       # Minifig Helmet Classic with Thin Chin Guard Cracked
+    19916                       # Minifig Helmet SW Darth Vader Upper Part
+    19917                       # Minifig Collar SW Darth Vader Helmet Bottom
+    20950                       # Minifig Helmet Kylo Ren
+    30048                       # Minifig Helmet Morion
+    30105                       # Minifig Helmet with Bat Wings
+    30120                       # Minifig Helmet with Hexagonal Top and Hoses
+    30172                       # Minifig Hat Pith Helmet
+    30175                       # Minifig Helmet Samurai
+    30214                       # Minifig Helmet Round Bubble
+    30273                       # Minifig Helmet with Chinstrap and Wide Brim
+    30325                       # Minifig Helmet Mining
+    30368                       # Minifig Helmet Darth Vader
+    30369                       # Minifig Helmet Scout Trooper
+    30370                       # Minifig Helmet Star Wars Rebel Pilot
+    30380                       # Minifig Helmet SW Mandalorian with Rocket Pack
+    30408                       # Minifig Helmet Stormtrooper
+    44360                       # Minifig Helmet SW Snowtrooper
+    46303                       # Minifig Helmet Skateboard
+    48489                       # Minifig Helmet Visor with Pointy Sides and Eye Slit
+    48493                       # Minifig Helmet Castle with Angled Cheek Protection
+    50665                       # Minifig Helmet Classic with Thin Chin Guard Unbroken
+    53450                       # Minifig Helmet Viking with Nose Protector
+    53451                       # Minifig Helmet Viking Horn
+    57900                       # Minifig Helmet Imperial AT-ST Pilot
+    60747                       # Minifig Helmet Cap with Wings
+    60748                       # Minifig Helmet Cap
+    61189                       # Minifig Helmet SW Clone Trooper Phase I
+    63585                       # Minifig Helmet Floodlight for SW Clone Trooper Helmet
+    63586                       # Minifig Helmet Rangefinder for SW Clone Trooper Helmet
+    71591                       # Minifig Helmet Ornament Horn
+    85945                       # Minifig Helmet Alien Skull with Fangs
+    87610                       # Minifig Helmet Mandalorian
+    87754                       # Minifig Helmet Underwater
+    87998                       # Minifig Helmet Army
+    88284                       # Minifig Helmet Persian
+    89159                       # Minifig Helmet Visor Large with Trapezoid Area on Top
+    89520                       # Minifig Helmet Castle Closed with Eye Slit
+    89918                       # Minifig Helmet Underwater Atlantis Portal Emperor
+    95676                       # Minifig Helmet Gladiator
+    98366                       # Minifig Helmet Roman Soldier
+
+Group MinifigHats:
+    2338                        # Minifig Hat High Cone Shaped
+    2528                        # ~Minifig Hat Bicorne (Obsolete)
+    2543                        # Minifig Hat Rag
+    2544                        # Minifig Hat Tricorne
+    2545                        # Minifig Hat Imperial Guard Shako
+    3624                        # Minifig Police Hat
+    3629                        # Minifig Hat Cowboy
+    3878                        # Minifig Top Hat
+    3898                        # Minifig Cook's Hat
+    6131                        # Minifig Wizards Hat
+    13787                       # Minifig Hat Elf with Pointy Ears
+    13788                       # Minifig Hat with Wide Brim Down
+    15424                       # Minifig Hat Cowboy Type 2
+    15530                       # Minifig Hat Police
+    17349                       # Minifig Hat Wizard without Brim
+    24496                       # Minifig Hat Ninja Wrap
+    26007                       # Minifig Hat Conical Asian with Curved Sides
+    27149                       # Minifig Hat Cylinder Tapered with Hatband
+    30135                       # Minifig Hat Kepi
+    30167                       # Minifig Hat Wide Brim Flat
+    30172                       # Minifig Hat Pith Helmet
+    41334                       # Minifig Hat Knit Cap
+    61506                       # Minifig Hat Fedora
+    71015                       # Minifig Hat Crown
+    85975                       # Minifig Hat Fez
+    90386                       # Minifig Hat Beret
+    90388                       # Minifig Hat Sombrero
+    90541                       # Minifig Hat Beanie
+    93059                       # Minifig Hat Conical Asian
+    95674                       # Minifig Hat Bowler
+    98381                       # Minifig Hat Flat Chef
+
+Group MinifigCaps:
+    4485                        # Minifig Cap with Long Flat Peak
+    11303                       # Minifig Cap with Short Arched Peak with Seams and Top Pin Hole
+    30170                       # Minifig Cap Aviator Goggles
+    30171                       # Minifig Cap Aviator
+    60747                       # Minifig Helmet Cap with Wings
+    86035                       # Minifig Cap with Short Arched Peak
+    93219                       # Minifig Baseball Cap with Button on Top
+
+Group FriendsHair:
+    15284                       # Figure Friends Hair Long with Ponytail, Side Bangs and Sun Visor
+    15673                       # Figure Friends Hair with Top Knot Bun and Hair Band
+    15675                       # Figure Friends Hair Long with Ponytail French Braided with  3 Pin Holes
+    15677                       # Figure Friends Hair Wavy with Curls and  2 Pinholes
+    92254                       # Figure Friends Hair Long with Ponytail, Side Bangs and Horse Riding Helmet
+    92256                       # Figure Friends Hair Long Wavy
+    92257                       # Figure Friends Hair Long with Ponytail and Side Bangs
+    92258                       # Figure Friends Hair Long Wavy Partially Tied Back
+    93352                       # Figure Friends Hair Long with Curls
+    96480                       # Figure Friends Hair Brush with Heart on Reverse
+    96484                       # Figure Friends Hair Dryer
+    92254                       # Figure Friends Hair Long with Ponytail, Side Bangs and Horse Riding Helmet
+    92255                       # Figure Friends Hair Long Straight
+    92259                       # Figure Friends Hair Short, Bob Cut
+
+##############################################################################
+#
+# Regular minifigures
+#
+##############################################################################
+Parent 973: # Torso
+    0     0 0                   # attach point
+    0    -6 0                   # attach point
+  -15.4   8 0                   # right arm attach point
+   15.4   8 0                   # left arm attach point
+    0   -24 0                   # head attach point
+    0    32 0                   # hips attach point
+    15                          # Minifig Legs Old
+    975                         # Minifig Arm Right
+    976                         # Minifig Arm Left
+    3626                        # Minifig Head with Blocked Hollow Stud
+    3815                        # Minifig Hips
+    3818                        # Minifig Arm Right
+    3819                        # Minifig Arm Left
+    3838                        # Minifig Airtanks
+    4498                        # Minifig Arrow Quiver
+    4524                        # Minifig Cape
+    2524                        # Minifig Backpack Non-Opening
+    10679                       # Minifig Hips and Legs with Robotic Leg Right
+    16709                       # Minifig Hips and Legs Short with Horizontal Stripe
+    21019                       # ~Minifig Hips and Legs Dual Mould with Uncoloured Lower Leg Pattern
+    24323                       # Minifig Hips and Legs Faun
+    42446                       # Bracket 1 x 1 - 1 x 1 Thin with Stud Hole
+    84637                       # Minifig Hips and Legs with Wooden Leg Right
+
+Parent 975: # right arm
+    -22 16.1213 20.8787         # TODO: check?
+    977                         # Minifig Hand
+    3820                        # Minifig Hand
+Parent 976: # left arm
+    22 16.1213 20.8787          # TODO: check?
+    977                         # Minifig Hand
+    3820                        # Minifig Hand
+
+Parent 3626: # head
+    0 0 0                       # hair/hat/helmet attach point
+    0 0 -1                      # hair attach point
+
+    MinifigHair
+    MinifigHelmets
+    MinifigHats
+    MinifigCaps
+
+    6158                        # Minifig Fire Helmet Breathing Hose
+    15553                       # Minifig Headdress Batgirl
+Parent 3815: # hips
+    0 12 0                      # left leg attach point
+    2532                        # Minifig Leg Wooden
+    3816                        # ~Minifig Leg Right (Obsolete)
+    3817                        # ~Minifig Leg Left (Obsolete)
+    10177                       # Minifig Leg Right Robotic
+    17486                       # Minifig Robot Leg  1 x  2 x  1.667 with Pin
+    20460                       # ~Minifig Leg Left Dual Mould
+    20461                       # ~Minifig Leg Right Dual Mould
+    24082                       # Minifig Leg Faun Right
+    24083                       # Minifig Leg Faun Left
+    30362                       # ~Minifig Robot Leg (Obsolete)
+    87569                       # Minifig Mechanical Leg Angled
+
+Parent 3818: # right arm
+    -5 19 -10                   # hand attach point
+    977                         # Minifig Hand
+    3820                        # Minifig Hand
+Parent 3819: # left arm
+    5 19   -10                  # hand attach point
+    5 18.9  -9.9                # hand/hand hook attach point
+    977                         # Minifig Hand
+    2531                        # Minifig Hand Hook
+    3820                        # Minifig Hand
+Parent 3820: # hand
+    -0.1903  -1.37    -9.4321   # radio with long handle attach point
+    -0.0292 -18.6122 -14.2941   # bar with clip attach point
+     0      -27.7451 -16.8451   # goblet/oar attach point
+     0       -0.6379  -9.8353   # gun flintlock pistol attach point / lance attach point
+     0       -2.5746 -10.3352   # sword cutlass attach point
+     0.0004 -25.8089 -16.3445   # oar attach point
+     0      -28.3085 -42.8774   # gun musket attach point
+     0       14.6628  -5.8898   # paint brush attach point
+     0      -10.319  -12.3384   # shield triangular attach point
+     0        1.8796  -9.1834   # bow with arrow attach point
+     0        4.3967  -8.5325   # bow with arrow attach point (with arrow in other hand)
+     0      -43.236  -20.8515   # spear with round end attach point
+     0      -45.1723 -21.3522   # spear with round end attach point (held slightly further down)
+     0       -1.3031 -10.0196   # suitcase attach point
+     5.0276  -9.0556 -32.0066   # cup attach point
+    -0.0071   1.1162  -9.4039   # bar 3L attach point
+     0.0076  -1.8049 -10.1498   # suitcase with long handle attach point
+    -1.9531   2.0054 -28.9541   # newspaper attach point
+    -0.0034  -0.8222  -9.8935   # handcuffs attach point / radio with large grille
+     0.0041 -15.8223 -13.7717   # Bar 1.5L with Clip
+    2343                        # Minifig Goblet
+    2530                        # Minifig Sword Cutlass
+    2542                        # Minifig Tool Oar
+    2561                        # Minifig Gun Musket
+    2562                        # Minifig Gun Flintlock Pistol
+    3068                        # Tile 2x2 (for newspaper)
+    3846                        # Minifig Shield Triangular
+    3849                        # Minifig Lance
+    3899                        # Minifig Cup
+    3962                        # Minifig Radio
+    4497                        # Minifig Spear with Round End
+    4449                        # Minifig Suitcase (closed)
+    4499                        # Minifig Bow with Arrow
+    19220                       # Minifig Radio with Large Grille
+    37178                       # Minifig Suitcase with Long Handle (closed)
+    48729                       # Bar 1.5L with Clip
+    61482                       # Minifig Handcuffs
+    87994                       # Bar 3L
+    93551                       # Minifig Paint Palette
+    93552                       # Minifig Paint Brush
+
+
+Parent 6260: # skeleton torso
+    0 -24 0                     # skeleton head attach point
+    21.2 6.8 0                  # skeleton left arm attach point
+    -21.2 6.8 0                 # skeleton right arm attach point
+    10 45 0                     # left leg attach point
+    -10 45 0                    # right leg attach point
+    3626                        # Minifig Head
+    6265                        # Minifig Skeleton Arm
+    6266                        # Minifig Skeleton Leg
+    23769                       # Minifig Skeleton Leg Long
+    82359                       # Minifig Skeleton Head
+    93062                       # Minifig Skeleton Leg with Square Foot
+    93612                       # ~Minifig Skeleton Leg with Square Foot, Leg
+    93613                       # ~Minifig Skeleton Leg with Square Foot, Foot
+
+Parent 82359: # skeleton head
+    0 0 0                       # hat/helmet attach point
+
+    MinifigHelmets
+    MinifigHats
+    MinifigCaps
+
+    6158                        # Minifig Fire Helmet Breathing Hose
+    15553                       # Minifig Headdress Batgirl
+
+Parent 25128: # Minifig Baby
+    0 -0.9273 0                 # Head attach point
+    100662                      # Minifig baby head
+
+##############################################################################
+#
+# Friends figures
+#
+##############################################################################
+Group FriendsTorsoChildren
+    92198                       # Figure Friends Head
+    92240                       # Figure Friends Male Head
+    92244                       # Figure Friends Female Left Arm
+    92245                       # Figure Friends Female Right Arm
+    92246                       # Figure Friends Male Left Arm
+    92247                       # Figure Friends Male Right Arm
+    92248                       # Figure Friends Hips
+    10679                       # Minifig Hips and Legs with Robotic Leg Right
+    16709                       # Minifig Hips and Legs Short with Horizontal Stripe
+    24323                       # Minifig Hips and Legs Faun
+    84637                       # Minifig Hips and Legs with Wooden Leg Right
+
+Parent 92198: # Figure Friends Head
+    0 0 -3                      # hair attach point
+    FriendsHair
+    MinifigHair
+
+Parent 92240: # Figure Friends Male Head
+    0 0 -3
+    FriendsHair
+    MinifigHair
+
+Parent u9210: # Figure Friends Boy Torso
+      0   -33.2   0             # head attach point
+      0   -36.1   0             # head attach point
+     11     0     0             # left arm attach point
+    -11     0     0             # right arm attach point
+      0    29.4  -1.2           # hips attach point
+      0    -2.7 -47.4           # legs attach point
+    FriendsTorsoChildren
+
+Parent 92241: # Figure Friends Girl Torso
+      0   -33.2   0             # head attach point
+      0   -36.1   0             # head attach point
+     11     0     0             # left arm attach point
+    -11     0     0             # right arm attach point
+      0    29.4  -1.2           # hips attach point
+      0    -2.7 -47.4           # legs attach point
+     FriendsTorsoChildren
+
+Parent 92242: # Figure Friends Man Torso
+      0   -33.2   0             # head attach point
+      0   -36.1   0             # head attach point
+     11     0     0             # left arm attach point
+    -11     0     0             # right arm attach point
+      0    29.4  -1.2           # hips attach point
+      0    -2.7 -47.4           # legs attach point
+    FriendsTorsoChildren
+
+Parent 92243: # Figure Friends Woman Torso
+      0   -33.2   0             # head attach point
+      0   -36.1   0             # head attach point
+     11     0     0             # left arm attach point
+    -11     0     0             # right arm attach point
+      0    29.4  -1.2           # hips attach point
+      0    -2.7 -47.4           # legs attach point
+    FriendsTorsoChildren
+
+Parent 92248: # Figure Friends Hips
+      0  47.4      -2.7         # legs attach point
+      0  16.0215  -44.7133      # legs attach point (sitting down)
+    11202                       # Figure Friends Legs with Shorts
+    11244                       # Figure Friends Legs with Wrap-around Skirt
+    15680                       # Figure Friends Legs with Full Length Skirt
+    16529                       # Figure Friends Legs Mermaid Tail
+    92249                       # Figure Friends Legs with Long Skirt
+    92250                       # Figure Friends Legs with Layered Skirt
+    92251                       # Figure Friends Legs with Cropped Trousers
+    92252                       # Figure Friends Legs with Pleated Skirt
+    92253                       # Figure Friends Legs with Trousers
