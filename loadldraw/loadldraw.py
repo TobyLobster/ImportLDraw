@@ -46,6 +46,8 @@ import itertools
 import operator
 import zipfile
 import tempfile
+import base64
+from dataclasses import dataclass
 
 from pprint import pprint
 
@@ -56,8 +58,10 @@ def linkToScene(ob):
 
 # **************************************************************************************
 def linkToCollection(collectionName, ob):
+    global globalHasCollections
+
     # Add object to the appropriate collection
-    if hasCollections:
+    if globalHasCollections:
         if bpy.data.collections[collectionName].objects.find(ob.name) < 0:
             bpy.data.collections[collectionName].objects.link(ob)
     else:
@@ -69,9 +73,11 @@ def unlinkFromScene(ob):
         bpy.context.collection.objects.unlink(ob)
 
 # **************************************************************************************
-def selectObject(ob):
+def selectObject(ob, recursive = False):
     ob.select_set(state=True)
     bpy.context.view_layer.objects.active = ob
+    if recursive:
+        bpy.ops.object.select_grouped(extend=True, type='CHILDREN_RECURSIVE')
 
 # **************************************************************************************
 def deselectObject(ob):
@@ -120,8 +126,7 @@ class Options:
     # Full filepath to ldraw folder. If empty, some standard locations are attempted
     ldrawDirectory     = r""            # Full filepath to the ldraw parts library (searches some standard locations if left blank)
     instructionsLook   = False          # Set up scene to look like Lego Instruction booklets
-    #scale              = 0.01           # Size of the lego model to create. (0.04 is LeoCAD scale)
-    realScale          = 1              # Scale of lego model to create (1 represents real Lego scale)
+    realScale          = 1              # Scale of lego to create (1 represents real world Lego scale)
     useUnofficialParts = True           # Additionally searches <ldraw-dir>/unofficial/parts and /p for files
     resolution         = "Standard"     # Choose from "High", "Standard", or "Low"
     defaultColour      = "4"            # Default colour ("4" = red)
@@ -207,8 +212,8 @@ globalContext = None
 globalPoints = []
 globalScaleFactor = 0.0004
 globalWeldDistance = 0.0005
+globalHasCollections = None
 
-hasCollections = None
 lightName = "Light"
 
 # **************************************************************************************
@@ -417,6 +422,8 @@ class Configure:
 
         # Always search for parts in the 'models' folder
         Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "models"))
+        Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "parts"))
+        Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "parts", "s"))
 
         # Search for stud logo parts
         if Options.useLogoStuds and Options.studLogoDirectory != "":
@@ -848,6 +855,7 @@ class FileSystem:
 
     # Takes a case-insensitive filepath and constructs a case sensitive version (based on an actual existing file)
     # See https://stackoverflow.com/questions/8462449/python-case-insensitive-file-name/8462613#8462613
+    # (Note that https://stackoverflow.com/a/39140604 is slower)
     def pathInsensitive(path):
         """
         Get a case-insensitive path for use on a case sensitive system.
@@ -869,8 +877,14 @@ class FileSystem:
         >>> path_insensitive("/HOME/Chris/I HOPE this doesn't exist")
         "/HOME/Chris/I HOPE this doesn't exist"
         """
-
-        return FileSystem.__pathInsensitive(path) or path
+        try:
+            result = CachedFilepaths.get(path)
+            if result is None:
+                result = FileSystem.__pathInsensitive(path) or path
+                CachedFilepaths.add(path, result)
+            return result
+        except OSError:
+            return path
 
     def __pathInsensitive(path):
         """
@@ -900,10 +914,10 @@ class FileSystem:
         # at this point, the directory exists but not the file
 
         try:  # we are expecting dirname to be a directory, but it could be a file
-            files = CachedDirectoryFilenames.getCached(dirname)
+            files = CachedDirectoryFilenames.get(dirname)
             if files is None:
                 files = os.listdir(dirname)
-                CachedDirectoryFilenames.addToCache(dirname, files)
+                CachedDirectoryFilenames.add(dirname, files)
         except OSError:
             return
 
@@ -978,27 +992,55 @@ class FileSystem:
             if os.path.exists(fullPathName):
                 return fullPathName
 
+        print("Could not find ", filename, " in paths ", allSearchPaths)
+
         return None
 
 
 # **************************************************************************************
 # **************************************************************************************
-class CachedDirectoryFilenames:
-    """Cached dictionary of directory filenames keyed by directory path"""
+class Cached:
+    """Simple cached dictionary of objects"""
 
     __cache = {}        # Dictionary
 
-    def getCached(key):
-        if key in CachedDirectoryFilenames.__cache:
-            return CachedDirectoryFilenames.__cache[key]
+    def get(key):
+        if key in __class__.__cache:
+            return __class__.__cache[key]
         return None
 
-    def addToCache(key, value):
-        CachedDirectoryFilenames.__cache[key] = value
+    def getIndex(key):
+        return list(__class__.__cache.keys()).index(key)
 
-    def clearCache():
-        CachedDirectoryFilenames.__cache = {}
+    def add(key, value):
+        __class__.__cache[key] = value
 
+    def clear():
+        __class__.__cache = {}
+
+# **************************************************************************************
+# **************************************************************************************
+class CachedTextureMaps(Cached):
+    """Cached dictionary of texture map objects keyed by texture map name"""
+    pass
+
+# **************************************************************************************
+# **************************************************************************************
+class CachedFilepaths(Cached):
+    """Cached actual filepaths keyed by requested path"""
+    pass
+
+# **************************************************************************************
+# **************************************************************************************
+class CachedDirectoryFilenames(Cached):
+    """Cached dictionary of directory filenames keyed by directory path"""
+    pass
+
+# **************************************************************************************
+# **************************************************************************************
+class CachedGeometry(Cached):
+    """Cached dictionary of LDrawGeometry objects"""
+    pass
 
 # **************************************************************************************
 # **************************************************************************************
@@ -1008,7 +1050,7 @@ class CachedFiles:
     __cache = {}        # Dictionary of exact filenames as keys, and file contents as values
     __lowercache = {}   # Dictionary of lowercase filenames as keys, and file contents as values
 
-    def getCached(key):
+    def get(key):
         # Look for an exact match in the cache first
         if key in CachedFiles.__cache:
             return CachedFiles.__cache[key]
@@ -1018,42 +1060,25 @@ class CachedFiles:
             return CachedFiles.__lowercache[key.lower()]
         return None
 
-    def addToCache(key, value):
+    def add(key, value):
         CachedFiles.__cache[key] = value
         CachedFiles.__lowercache[key.lower()] = value
 
-    def clearCache():
+    def clear():
         CachedFiles.__cache = {}
         CachedFiles.__lowercache = {}
 
 
 # **************************************************************************************
 # **************************************************************************************
-class CachedGeometry:
-    """Cached dictionary of LDrawGeometry objects"""
-
-    __cache = {}        # Dictionary
-
-    def getCached(key):
-        if key in CachedGeometry.__cache:
-            return CachedGeometry.__cache[key]
-        return None
-
-    def addToCache(key, value):
-        CachedGeometry.__cache[key] = value
-
-    def clearCache():
-        CachedGeometry.__cache = {}
-
-# **************************************************************************************
-# **************************************************************************************
 class FaceInfo:
-    def __init__(self, faceColour, culling, windingCCW, isGrainySlopeAllowed):
+    def __init__(self, faceColour, culling, windingCCW, isGrainySlopeAllowed, textureMap, parentDir):
         self.faceColour = faceColour
         self.culling = culling
         self.windingCCW = windingCCW
         self.isGrainySlopeAllowed = isGrainySlopeAllowed
-
+        self.textureMap = textureMap
+        self.parentDir = parentDir
 
 # **************************************************************************************
 # **************************************************************************************
@@ -1062,22 +1087,128 @@ class LDrawGeometry:
 
     def __init__(self):
         self.points = []
+        self.uvs = []
         self.faces = []
         self.faceInfo = []
         self.edges = []
         self.edgeIndices = []
 
-    def parseFace(self, parameters, cull, ccw, isGrainySlopeAllowed):
+    def signed_angle(a, b, normal):
+        # See https://stackoverflow.com/a/33920320
+        s = a.cross(b).dot(normal)
+        c = a.dot(b)
+        return math.degrees(math.atan2(s, c))
+
+    def applyTextureMap(self, textureMap, newPoints, debug):
+        # TODO: Is this right or should it default to (0,0)'s?
+        newUVs = [None] * len(newPoints)
+
+        if not textureMap:
+            return newUVs
+
+        if debug:
+            print("!!! textureMap=", textureMap)
+
+        pt1 = mathutils.Vector( (textureMap.x1, textureMap.y1, textureMap.z1) )
+        pt2 = mathutils.Vector( (textureMap.x2, textureMap.y2, textureMap.z2) )
+        pt3 = mathutils.Vector( (textureMap.x3, textureMap.y3, textureMap.z3) )
+
+        # Pre-calculate useful values
+        len_p1p2 = (pt2 - pt1).length
+        len_p1p3 = (pt3 - pt1).length
+
+        if textureMap.projType == 'PLANAR':
+            n1 = (pt2 - pt1).normalized()
+            n2 = (pt3 - pt1).normalized()
+        elif textureMap.projType == 'CYLINDRICAL':
+            n1 = (pt2 - pt1).normalized()
+        elif textureMap.projType == 'SPHERICAL':
+            # take the cross product of the two vectors extending from pt2 to get a third vector n3 at right angles to those.
+            n3 = (pt1 - pt2).cross(pt3 - pt2).normalized()
+            n2 = (pt1 - pt2).cross(n3).normalized()
+
+        for i in range(len(newPoints)):
+            # Get the point in question (scaling the point back to original ldraw size), just for the purposes of UV coordinate calculation
+            pt = newPoints[i]
+
+            if textureMap.projType == 'PLANAR':
+                # Calculate U
+                if len_p1p2 > 1e-8:
+                    u = math.fabs((pt1 - pt).dot(n1)) / len_p1p2
+                else:
+                    u = 0.0
+
+                # Calculate V
+                if len_p1p3 > 1e-8:
+                    v = math.fabs((pt1 - pt).dot(n2)) / len_p1p3
+                else:
+                    v = 0.0
+
+            elif textureMap.projType == 'CYLINDRICAL':
+                # Calculate U
+                distanceToPlane = (pt1 - pt).dot(n1)
+                ptOnPlane       = pt - distanceToPlane * n1
+                u  = LDrawGeometry.signed_angle(ptOnPlane - pt1, pt3 - pt1, -n1)
+                u /= textureMap.a   # U is normalised
+                u += 0.5            # U is centred
+
+                # Calculate V
+                if len_p1p2 > 1e-8:
+                    v = math.fabs(distanceToPlane) / len_p1p2
+                    v = 1-v
+                else:
+                    v = 0.0
+
+            elif textureMap.projType == 'SPHERICAL':
+                # Calculate U
+                distanceToPlane = (pt - pt1).dot(n3)
+                ptOnPlane       = pt - distanceToPlane * n3
+
+                u  = LDrawGeometry.signed_angle(ptOnPlane - pt1, pt2 - pt1, n3)
+                u /= textureMap.a   # U is normalised
+                u += 0.5            # U is centred
+
+                n0 = (pt - pt1).cross(n3).normalized()
+                temp = LDrawGeometry.signed_angle(pt1 - pt, n3, -n0)
+                v = temp / textureMap.b
+                if debug and i == 0:
+                    print("!!!! pt1=", pt1, "pt3=", pt3, "n0=", n0, "n3=", n3, "pt=", pt, " temp", temp, "(u,v)=", u, v)
+
+                # This is V calculation according to the spec, but no-one uses it
+                # Calculate V
+                #distanceToPlane = (pt - pt1).dot(n2)
+                #ptOnPlane       = pt - distanceToPlane * n2
+
+                #v  = LDrawGeometry.signed_angle(ptOnPlane - pt1, pt2 - pt1, n2)
+                #v /= textureMap.b   # V is normalised
+                #v += 0.5            # V is centred
+
+            else:
+                # Unknown UV projection type
+                u = 0.0
+                v = 0.0
+
+            #print("!!!! point=", pt, "(u,v)=", u, v)
+
+            # Convert to Blender's UV system (which has a UV origin at the bottom left of the texture image, where LDraw uses the standard top left) and store
+            blenderUV = mathutils.Vector( (u, 1-v) )
+            newUVs[i] = blenderUV
+
+        return newUVs
+
+    def parseFace(self, parameters, cull, ccw, isGrainySlopeAllowed, textureMap, parentDir):
         """Parse a face from parameters"""
 
         num_points = int(parameters[0])
         colourName = parameters[1]
 
+        # Add points
         newPoints = []
         for i in range(num_points):
-            blenderPos = Math.scaleMatrix @ mathutils.Vector( (float(parameters[i * 3 + 2]),
-                                                               float(parameters[i * 3 + 3]),
-                                                               float(parameters[i * 3 + 4])) )
+            pt = mathutils.Vector( (float(parameters[i * 3 + 2]),
+                                    float(parameters[i * 3 + 3]),
+                                    float(parameters[i * 3 + 4])) )
+            blenderPos = Math.scaleMatrix @ pt
             newPoints.append(blenderPos)
 
         # Fix "bowtie" quadrilaterals (see http://wiki.ldraw.org/index.php?title=LDraw_technical_restrictions#Complex_quadrilaterals)
@@ -1087,14 +1218,16 @@ class LDrawGeometry:
             nC = (newPoints[3] - newPoints[2]).cross(newPoints[0] - newPoints[2])
             if (nA.dot(nB) < 0):
                 newPoints[2], newPoints[3] = newPoints[3], newPoints[2]
+                newUVs[2], newUVs[3] = newUVs[3], newUVs[2]
             elif (nB.dot(nC) < 0):
                 newPoints[2], newPoints[1] = newPoints[1], newPoints[2]
+                newUVs[2], newUVs[1] = newUVs[1], newUVs[2]
 
         pointCount = len(self.points)
         newFace = list(range(pointCount, pointCount + num_points))
         self.points.extend(newPoints)
         self.faces.append(newFace)
-        self.faceInfo.append(FaceInfo(colourName, cull, ccw, isGrainySlopeAllowed))
+        self.faceInfo.append(FaceInfo(colourName, cull, ccw, isGrainySlopeAllowed, textureMap, parentDir))
 
     def parseEdge(self, parameters):
         """Parse an edge from parameters"""
@@ -1114,15 +1247,79 @@ class LDrawGeometry:
             assert i < numPoints
             assert i >= 0
 
-    def appendGeometry(self, geometry, matrix, isStud, isStudLogo, parentMatrix, cull, invert):
+# Old code to apply a texture map to a file, making a copy of it...
+#if self.textureMap:
+#    # Take a shallow copy of the LDrawFile
+#    self.file = copy.copy(self.file)
+#
+#    # Apply textureMap to the file.
+#    # Any faces without an existing texture map are texture mapped.
+#    assert len(self.file.geometry.faces) == len(self.file.geometry.faceInfo)
+#    for i in range(len(self.file.geometry.faces)):
+#        faceInfo = self.file.geometry.faceInfo[i]
+#        face = self.file.geometry.faces[i]
+#        if not faceInfo.imageFilename:
+#            realPoints = [self.file.geometry.points[i] for i in face]
+#            realUVs = self.file.geometry.applyTextureMap(self.textureMap, realPoints)
+#            j = 0
+#            for i in face:
+#                self.file.geometry.uvs[i] = realUVs[j]
+#                j += 1
+#        faceInfo.imageFilename = self.textureMap.imageFilename
+
+    def appendGeometry(self, geometry, matrix, isStud, isStudLogo, parentMatrix, cull, invert, textureMap, textureMapMatrix, topLevelNode):
+        global globalScaleFactor
+
         combinedMatrix = parentMatrix @ matrix
         isReflected = combinedMatrix.determinant() < 0.0
         reflectStudLogo = isStudLogo and isReflected
+
+        # Transform the texture map into local space of the points
+        if textureMap:
+            localSpaceTextureMap = textureMap.transform(textureMapMatrix.inverted())
+        else:
+            localSpaceTextureMap = None
 
         fixedMatrix = matrix.copy()
         if reflectStudLogo:
             fixedMatrix = matrix @ Math.reflectionMatrix
             invert = not invert
+
+        # Add texture map (UVs)
+        # First add all dummy UV values
+        pointCount = 0
+        for face in geometry.faces:
+            pointCount += len(face)
+        geometry.uvs = [None] * pointCount
+
+        # Create UVs for every vertex in every face
+        for index, face in enumerate(geometry.faces):
+            faceInfo = geometry.faceInfo[index]
+
+            newPoints = []
+            newUVs = []
+            # Gather points in LDraw space for this face (for UV generation)
+            for i in face:
+                newPoints.append(geometry.points[i] / globalScaleFactor)
+            if faceInfo.textureMap:
+                if topLevelNode:
+                    transformedTextureMap = faceInfo.textureMap.transform(Math.rotationMatrix)
+                else:
+                    transformedTextureMap = faceInfo.textureMap
+                newUVs = geometry.applyTextureMap(transformedTextureMap, newPoints, False)
+            else:
+                #if localSpaceTextureMap:
+                #    print("!!!! Applying localSpaceTextureMap=", localSpaceTextureMap)
+                #    for pt in newPoints:
+                #        print("!!!! Applying to point=", pt)
+                newUVs = geometry.applyTextureMap(localSpaceTextureMap, newPoints, True if localSpaceTextureMap else False)
+                #if localSpaceTextureMap:
+                #    print("!!!! Applied localSpaceTextureMap=", localSpaceTextureMap)
+
+            j = 0
+            for i in face:
+                geometry.uvs[i] = newUVs[j]
+                j += 1
 
         # Append face information
         pointCount = len(self.points)
@@ -1130,17 +1327,22 @@ class LDrawGeometry:
         for index, face in enumerate(geometry.faces):
             # Gather points for this face (and transform points)
             newPoints = []
+            newUVs    = []
             for i in face:
                 newPoints.append(fixedMatrix @ geometry.points[i])
+                newUVs.append(geometry.uvs[i])
 
             # Add clockwise and/or anticlockwise sets of points as appropriate
             newFace = face.copy()
             for i in range(len(newFace)):
                 newFace[i] += pointCount
 
-            faceInfo = geometry.faceInfo[index]
+            faceInfo = copy.copy(geometry.faceInfo[index])
             faceCCW = faceInfo.windingCCW != invert
             faceCull = faceInfo.culling and cull
+
+            if not faceInfo.textureMap:
+                faceInfo.textureMap = textureMap
 
             # If we are going to resolve ambiguous normals by "best guess" we will let
             # Blender calculate that for us later. Just cull with arbitrary winding for now.
@@ -1150,9 +1352,10 @@ class LDrawGeometry:
 
             if faceCCW or not faceCull:
                 self.points.extend(newPoints)
+                self.uvs.extend(newUVs)
                 self.faces.append(newFace)
 
-                newFaceInfo.append(FaceInfo(faceInfo.faceColour, True, True, not isStud and faceInfo.isGrainySlopeAllowed))
+                newFaceInfo.append(FaceInfo(faceInfo.faceColour, True, True, not isStud and faceInfo.isGrainySlopeAllowed, faceInfo.textureMap, faceInfo.parentDir))
                 self.verify(newFace, len(self.points))
 
             if not faceCull:
@@ -1162,10 +1365,12 @@ class LDrawGeometry:
                     newFace[i] += len(newPoints)
 
             if not faceCCW or not faceCull:
+                # Reverse the order of the new points and the UVs
                 self.points.extend(newPoints[::-1])
+                self.uvs.extend(newUVs[::-1])
                 self.faces.append(newFace)
 
-                newFaceInfo.append(FaceInfo(faceInfo.faceColour, True, True, not isStud and faceInfo.isGrainySlopeAllowed))
+                newFaceInfo.append(FaceInfo(faceInfo.faceColour, True, True, not isStud and faceInfo.isGrainySlopeAllowed, faceInfo.textureMap, faceInfo.parentDir))
                 self.verify(newFace, len(self.points))
 
         self.faceInfo.extend(newFaceInfo)
@@ -1183,10 +1388,10 @@ class LDrawGeometry:
 class LDrawNode:
     """A node in the hierarchy. References one LDrawFile"""
 
-    def __init__(self, filename, isFullFilepath, parentFilepath, colourName=Options.defaultColour, matrix=Math.identityMatrix, bfcCull=True, bfcInverted=False, isLSynthPart=False, isSubPart=False, isRootNode=True, groupNames=[]):
+    def __init__(self, filename, isFullFilepath, parentDir, colourName=Options.defaultColour, matrix=Math.identityMatrix, bfcCull=True, bfcInverted=False, isLSynthPart=False, isSubPart=False, isRootNode=True, groupNames=[], textureMap=None):
         self.filename       = filename
         self.isFullFilepath = isFullFilepath
-        self.parentFilepath = parentFilepath
+        self.parentDir      = parentDir
         self.matrix         = matrix
         self.colourName     = colourName
         self.bfcInverted    = bfcInverted
@@ -1196,6 +1401,7 @@ class LDrawNode:
         self.isSubPart      = isSubPart
         self.isRootNode     = isRootNode
         self.groupNames     = groupNames.copy()
+        self.textureMap     = textureMap
 
     def look_at(obj_camera, target, up_vector):
         bpy.context.view_layer.update()
@@ -1207,7 +1413,7 @@ class LDrawNode:
         #print("UpVec  = " + str(up_vector[0]) + "," + str(up_vector[1]) + "," + str(up_vector[2]))
 
         # back vector is a vector pointing from the target to the camera
-        back = loc_camera - target;
+        back = loc_camera - target
         back.normalize()
 
         # If our back and up vectors are very close to pointing the same way (or opposite), choose a different up_vector
@@ -1263,14 +1469,13 @@ class LDrawNode:
 
     def load(self):
         # Is this file in the cache?
-        self.file = CachedFiles.getCached(self.filename)
+        self.file = CachedFiles.get(self.filename)
         if self.file is None:
             # Not in cache, so load file
-            self.file = LDrawFile(self.filename, self.isFullFilepath, self.parentFilepath, None, self.isSubPart)
+            self.file = LDrawFile(self.filename, self.isFullFilepath, self.parentDir, None, self.isSubPart)
             assert self.file is not None
 
-            # Add the new file to the cache
-            CachedFiles.addToCache(self.filename, self.file)
+            CachedFiles.add(self.filename, self.file)
 
         # Load any children
         for child in self.file.childNodes:
@@ -1296,7 +1501,7 @@ class LDrawNode:
         # If this is out of the ordinary, add a code that makes it a unique name to cache the mesh properly
         return "_{0}".format(index)
 
-    def getBlenderGeometry(self, realColourName, basename, parentMatrix=Math.identityMatrix, accumCull=True, accumInvert=False):
+    def getBlenderGeometry(self, realColourName, basename, textureMap, textureMapMatrix, topLevelNode, parentMatrix=Math.identityMatrix, accumCull=True, accumInvert=False):
         """
         Returns the geometry for the Blender Object at this node.
 
@@ -1306,6 +1511,8 @@ class LDrawNode:
         The result will become a single mesh in Blender.
         """
 
+        print("NODE=", self.filename)
+
         assert self.file is not None
 
         accumCull = accumCull and self.bfcCull
@@ -1314,17 +1521,25 @@ class LDrawNode:
         ourColourName = LDrawNode.resolveColour(self.colourName, realColourName)
         code = LDrawNode.getBFCCode(accumCull, accumInvert, self.bfcCull, self.bfcInverted)
         meshName = "Mesh_{0}_{1}{2}".format(basename, ourColourName, code)
-        key = (self.filename, ourColourName, accumCull, accumInvert, self.bfcCull, self.bfcInverted)
-        bakedGeometry = CachedGeometry.getCached(key)
+        if textureMap:
+            tmKey = textureMap.name()
+            CachedTextureMaps.add(tmKey, textureMap)
+            meshName += "_tex" + str(CachedTextureMaps.getIndex(tmKey))
+        else:
+            tmKey = None
+
+        key = (self.filename, ourColourName, accumCull, accumInvert, self.bfcCull, self.bfcInverted, tmKey)
+        bakedGeometry = CachedGeometry.get(key)
         if bakedGeometry is None:
             combinedMatrix = parentMatrix @ self.matrix
 
             # Start with a copy of our file's geometry
             assert len(self.file.geometry.faces) == len(self.file.geometry.faceInfo)
             bakedGeometry = LDrawGeometry()
-            bakedGeometry.appendGeometry(self.file.geometry, Math.identityMatrix, self.file.isStud, self.file.isStudLogo, combinedMatrix, self.bfcCull, self.bfcInverted)
 
-            # Replaces the default colour 16 in our faceColours list with a specific colour
+            bakedGeometry.appendGeometry(self.file.geometry, Math.identityMatrix, self.file.isStud, self.file.isStudLogo, combinedMatrix, self.bfcCull, self.bfcInverted, textureMap, textureMapMatrix, topLevelNode)
+
+            # Replace the default colour 16 in our faceColours list with a specific colour
             for faceInfo in bakedGeometry.faceInfo:
                 faceInfo.faceColour = LDrawNode.resolveColour(faceInfo.faceColour, ourColourName)
 
@@ -1333,13 +1548,23 @@ class LDrawNode:
                 assert child.file is not None
                 if not child.isBlenderObjectNode():
                     childColourName = LDrawNode.resolveColour(child.colourName, ourColourName)
-                    childMeshName, bg = child.getBlenderGeometry(childColourName, basename, combinedMatrix, accumCull, accumInvert)
+
+                    if child.textureMap:
+                        childTextureMap         = child.textureMap
+                        childTextureMapMatrix   = child.matrix
+                        print("!!!! hELLO, childTextureMapMatrix=", childTextureMapMatrix)
+                    else:
+                        childTextureMap         = textureMap
+                        childTextureMapMatrix   = textureMapMatrix
+
+                    childMeshName, bg = child.getBlenderGeometry(childColourName, basename, childTextureMap, childTextureMapMatrix, False, combinedMatrix, accumCull, accumInvert)
 
                     isStud = child.file.isStud
                     isStudLogo = child.file.isStudLogo
-                    bakedGeometry.appendGeometry(bg, child.matrix, isStud, isStudLogo, combinedMatrix, self.bfcCull, self.bfcInverted)
 
-            CachedGeometry.addToCache(key, bakedGeometry)
+                    bakedGeometry.appendGeometry(bg, child.matrix, isStud, isStudLogo, combinedMatrix, self.bfcCull, self.bfcInverted, childTextureMap, childTextureMapMatrix, topLevelNode=False)
+
+            CachedGeometry.add(key, bakedGeometry)
         assert len(bakedGeometry.faces) == len(bakedGeometry.faceInfo)
         return (meshName, bakedGeometry)
 
@@ -1388,18 +1613,61 @@ class LDrawCamera:
 
 # **************************************************************************************
 # **************************************************************************************
+@dataclass
+class TextureMap:
+    def __init__(self, imageFilename, startOrNext, projType, virtualFullFilepath, x1, y1, z1, x2, y2, z2, x3, y3, z3, a = None, b = None):
+        self.imageFilename = imageFilename
+        self.startOrNext = startOrNext
+        self.projType = projType
+        # TODO: Document virtualFilepath
+        self.virtualFullFilepath = virtualFullFilepath
+        self.x1 = x1
+        self.y1 = y1
+        self.z1 = z1
+        self.x2 = x2
+        self.y2 = y2
+        self.z2 = z2
+        self.x3 = x3
+        self.y3 = y3
+        self.z3 = z3
+        self.a = a
+        self.b = b
+
+    def transform(self, matrix):
+        pt1 = matrix @ mathutils.Vector((self.x1, self.y1, self.z1))
+        pt2 = matrix @ mathutils.Vector((self.x2, self.y2, self.z2))
+        pt3 = matrix @ mathutils.Vector((self.x3, self.y3, self.z3))
+
+        return TextureMap(self.imageFilename, self.startOrNext, self.projType, self.virtualFullFilepath,
+                          pt1.x, pt1.y, pt1.z,
+                          pt2.x, pt2.y, pt2.z,
+                          pt3.x, pt3.y, pt3.z,
+                          self.a, self.b)
+
+    def name(self):
+        return f'TextureMap("{self.imageFilename}","{self.startOrNext}","{self.projType}","{self.virtualFullFilepath}", ({self.x1} {self.y1} {self.z1})  ({self.x2} {self.y2} {self.z2})  ({self.x3} {self.y3} {self.z3})   {self.a} {self.b}'
+
+    def __repr__(self):
+        return f'TextureMap("{self.imageFilename}","{self.startOrNext}","{self.projType}","{self.virtualFullFilepath}", ({self.x1} {self.y1} {self.z1})  ({self.x2} {self.y2} {self.z2})  ({self.x3} {self.y3} {self.z3})   {self.a} {self.b}'
+
+# **************************************************************************************
+# **************************************************************************************
+class BFC:
+    def __init__(self):
+        self.localCull  = True
+        self.windingCCW = True
+        self.invertNext = False
+
+# **************************************************************************************
+# **************************************************************************************
 class LDrawFile:
     """Stores the contents of a single LDraw file.
     Specifically this represents an IO, LDR, L3B, DAT or one '0 FILE' section of an MPD.
     Splits up an MPD file into '0 FILE' sections and caches them."""
 
-    def __loadLegoFile(self, filepath, isFullFilepath, parentFilepath):
+    def __loadLegoFile(self, filepath, isFullFilepath, parentDir):
         # Resolve full filepath if necessary
         if isFullFilepath is False:
-            if parentFilepath == "":
-                parentDir = os.path.dirname(filepath)
-            else:
-                parentDir = os.path.dirname(parentFilepath)
             result = FileSystem.locate(filepath, parentDir)
             if result is None:
                 printWarningOnce("Missing file {0}".format(filepath))
@@ -1439,7 +1707,7 @@ class LDrawFile:
             Configure.appendPath(os.path.join(directory_to_extract_to, "CustomParts", "s"))
             Configure.appendPath(os.path.join(directory_to_extract_to, "CustomParts", "s", "s"))
 
-        self.fullFilepath = filepath
+        self.virtualFullFilepath = filepath
 
         # Load text into local lines variable
         lines = FileSystem.readTextFile(filepath)
@@ -1455,31 +1723,51 @@ class LDrawFile:
         endLine = 0
         lineCount = 0
         sectionFilename = filepath
+        currentSectionType = ""
         foundEnd = False
 
         for line in lines:
             parameters = line.strip().split()
             if len(parameters) > 2:
                 if parameters[0] == "0" and parameters[1] == "FILE":
+                    # Finish previous section
                     if foundEnd == False:
                         endLine = lineCount
                         if endLine > startLine:
-                            sections.append((sectionFilename, lines[startLine:endLine]))
+                            sections.append((sectionFilename, lines[startLine:endLine], currentSectionType))
 
+                    # Start new section
                     startLine = lineCount
                     foundEnd = False
+                    currentSectionType = parameters[1]
                     sectionFilename = " ".join(parameters[2:])
 
-                if parameters[0] == "0" and parameters[1] == "NOFILE":
+                elif parameters[0] == "0" and parameters[1] == "!DATA":
+                    # Finish previous section
+                    if foundEnd == False:
+                        endLine = lineCount
+                        if endLine > startLine:
+                            sections.append((sectionFilename, lines[startLine:endLine], currentSectionType))
+
+                    # Start new section
+                    startLine = lineCount
+                    foundEnd = False
+                    currentSectionType = parameters[1]
+                    sectionFilename = " ".join(parameters[2:])
+
+                elif parameters[0] == "0" and parameters[1] == "NOFILE":
+                    # End section
                     endLine = lineCount
                     foundEnd = True
-                    sections.append((sectionFilename, lines[startLine:endLine]))
+                    sections.append((sectionFilename, lines[startLine:endLine, currentSectionType]))
+                    currentSectionType = ""
             lineCount += 1
 
         if foundEnd == False:
+            # End final section
             endLine = lineCount
             if endLine > startLine:
-                sections.append((sectionFilename, lines[startLine:endLine]))
+                sections.append((sectionFilename, lines[startLine:endLine], currentSectionType))
 
         if len(sections) == 0:
             return False
@@ -1488,16 +1776,56 @@ class LDrawFile:
         self.filename = sections[0][0]
         self.lines = sections[0][1]
 
+        parentDir = os.path.dirname(filepath)
+
         # Remaining sections are loaded into the cached files
-        for (sectionFilename, lines) in sections[1:]:
-            # Load section
-            file = LDrawFile(sectionFilename, False, filepath, lines, False)
-            assert file is not None
+        for (sectionFilename, lines, sectionType) in sections[1:]:
+            if sectionType == "FILE":
+                # Load FILE section
+                textureMap = self.textureMaps[-1] if self.textureMaps else None
+                file = LDrawFile(sectionFilename, False, parentDir, lines, False)
+                assert file is not None
+            elif sectionType == "!DATA":
+                # Load binary !DATA from lines
+                data = ""
+                for line in lines:
+                    parameters = line.strip().split()
+                    if len(parameters) > 2:
+                        if parameters[0] == "0":
+                            if parameters[1] == "!:":
+                                data += parameters[2]
+                try:
+                    # Decode the base64 text into binary bytes
+                    file = base64.b64decode(data)
+
+                    file_name, file_extension = os.path.splitext(sectionFilename)
+                    if file_extension.lower() == '.png':
+                        # Decode PNG data bytes into a Blender Image
+                        file = LDrawFile.__image_from_data(sectionFilename, file)
+                except Exception as e:
+                    file = None
+                    printWarningOnce(f"Embedded file '{sectionFilename}' could not be decoded. Exception: {e}")
+
 
             # Cache section
-            CachedFiles.addToCache(sectionFilename, file)
+            if file:
+                CachedFiles.add(sectionFilename, file)
 
         return True
+
+    def __image_from_data(img_name, data):
+        # See https://blender.stackexchange.com/a/240141
+        # Create image, width and height are dummy values
+        img = bpy.data.images.new(img_name, 8, 8)
+
+        # Set packed file data
+        img.pack(data=data, data_len=len(data))
+
+        # Switch to file source so it uses the packed file
+        img.source = 'FILE'
+
+        return img
+
 
     def __isStud(filename):
         """Is this file a stud?"""
@@ -1542,7 +1870,119 @@ class LDrawFile:
 
         return name in ("logo3.dat", "logo4.dat", "logo5.dat", "logotente.dat")
 
-    def __init__(self, filename, isFullFilepath, parentFilepath, lines = None, isSubPart=False):
+    def __removeTextureMap(self, virtualFullEndFilepath = None):
+        if self.textureMaps:
+            # Check the 'END' TEXMAP is in the same file as the 'START' TEXMAP...
+            if virtualFullEndFilepath == self.textureMaps[-1].virtualFullFilepath:
+                del self.textureMaps[-1]
+
+    def __removeIfNextTexture(self):
+        if self.textureMaps:
+            if self.textureMaps[-1].startOrNext == 'NEXT':
+                del self.textureMaps[-1]
+
+    def __getNextParameter(self, line):
+        line = line.strip()         # skip spaces
+        if not line:
+            return (None, None)
+
+        result = ""
+        inQuotedString = False
+        first = True
+        while line:
+            if line[0:1] == r'\\"' or line[0:1] == r'\\\\':
+                # Backslash signifies a literal character next
+                # Skip the backslash and add the next character
+                line = line[1:]
+            elif line[0] == r'"':
+                # Handle initial and final quote
+                if first:
+                    # found start of a quoted string
+                    inQuotedString = True
+                    line = line[1:]
+                    first = False
+                    continue
+                elif inQuotedString:
+                    # found end of a quoted string
+                    line = line[1:]
+                    break
+            elif line[0] == ' ':
+                if not inQuotedString:
+                    break
+
+            if line:
+                # Add current character to result
+                result += line[0]
+                line = line[1:]
+            first = False
+
+        return (line, result)
+
+    def __parseGeometryLine(self, line, parameters, restOfLine, bfc, processingLSynthParts, currentGroupNames, isGrainySlopeAllowed, parentDir):
+        # Ignore the FALLBACK section of the TEXMAP
+        if self.inTexMapFallbackSection:
+            return bfc
+
+        # Parses commands 1,2,3,4,5 only. ie. files, lines, and faces.
+        # This is used for texture mapped geometry too.
+
+        if self.bfcCertified is None:
+            self.bfcCertified = False
+
+        self.isModel = (not self.isPart) and (not self.isSubPart)
+
+        # Parse a file reference
+        if parameters[0] == "1":
+            (x, y, z, a, b, c, d, e, f, g, h, i) = map(float, parameters[2:14])
+            (x, y, z) = Math.scaleMatrix @ mathutils.Vector((x, y, z))
+            localMatrix = mathutils.Matrix( ((a, b, c, x), (d, e, f, y), (g, h, i, z), (0, 0, 0, 1)) )
+
+            new_filename = restOfLine[14].strip()
+            new_colourName = parameters[1]
+
+            det = localMatrix.determinant()
+            if det < 0:
+                bfc.invertNext = not bfc.invertNext
+            canCullChildNode = (self.bfcCertified or self.isModel) and bfc.localCull and (det != 0)
+
+            if new_filename != "":
+                textureMap = self.textureMaps[-1] if self.textureMaps else None
+                newNode = LDrawNode(new_filename, False, parentDir, new_colourName, localMatrix, canCullChildNode, bfc.invertNext, processingLSynthParts, not self.isModel, False, currentGroupNames, textureMap)
+                self.childNodes.append(newNode)
+            else:
+                printWarningOnce("In file '{0}', the line '{1}' is not formatted corectly (ignoring).".format(self.virtualFullFilepath, line))
+
+        # Parse an edge
+        elif parameters[0] == "2":
+            self.geometry.parseEdge(parameters)
+            # Remove any temporary ('NEXT' type) texture map after each geometry
+            self.__removeIfNextTexture()
+
+        # Parse a face (either a triangle or a quadrilateral)
+        elif parameters[0] == "3" or parameters[0] == "4":
+            if self.bfcCertified is None:
+                self.bfcCertified = False
+            if not self.bfcCertified or not bfc.localCull:
+                printWarningOnce("Found double-sided polygons in file {0}".format(self.filename))
+                self.isDoubleSided = True
+
+            assert len(self.geometry.faces) == len(self.geometry.faceInfo)
+
+            # get current texture map, if any
+            textureMap = self.textureMaps[-1] if self.textureMaps else None
+            self.geometry.parseFace(parameters, self.bfcCertified and bfc.localCull, bfc.windingCCW, isGrainySlopeAllowed, textureMap, parentDir)
+            assert len(self.geometry.faces) == len(self.geometry.faceInfo)
+            # Remove any temporary ('NEXT' type) texture map after each geometry
+            self.__removeIfNextTexture()
+        elif parameters[0] == "5":
+            # Optional line, which we ignore except to cancel any current texture map with NEXT type
+            # Remove any temporary ('NEXT' type) texture map after each geometry
+            self.__removeIfNextTexture()
+
+        bfc.invertNext = False
+        return bfc
+
+    def __init__(self, filename, isFullFilepath, parentDir, lines = None, isSubPart=False):
         """Loads an LDraw file (IO, LDR, L3B, DAT or MPD)"""
 
         global globalCamerasToAdd
@@ -1560,22 +2000,22 @@ class LDrawFile:
         self.childNodes       = []
         self.bfcCertified     = None
         self.isModel          = False
+        self.textureMaps      = []
+        self.inTexMapFallbackSection = False
 
         isGrainySlopeAllowed = not self.isStud
 
         if self.lines is None:
             # Load the file into self.lines
-            if not self.__loadLegoFile(self.filename, isFullFilepath, parentFilepath):
+            if not self.__loadLegoFile(self.filename, isFullFilepath, parentDir):
                 return
         else:
-            # We are loading a section of our parent document, so full filepath is that of the parent
-            self.fullFilepath = parentFilepath
+            # We are loading a section of our parent document, so full filepath is combined with the parent directory
+            self.virtualFullFilepath = os.path.join(parentDir, filename)
 
         # BFC = Back face culling. The rules are arcane and complex, but at least
         #       it's kind of documented: http://www.ldraw.org/article/415.html
-        bfcLocalCull          = True
-        bfcWindingCCW         = True
-        bfcInvertNext         = False
+        bfc = BFC()
         processingLSynthParts = False
         camera = LDrawCamera()
 
@@ -1583,19 +2023,29 @@ class LDrawFile:
 
         #debugPrint("Processing file {0}, isSubPart = {1}, found {2} lines".format(self.filename, self.isSubPart, len(self.lines)))
 
-        for line in self.lines:
-            parameters = line.strip().split()
+        for raw_line in self.lines:
+            parameters = []
+            restOfLine = []
+            line = raw_line
+            while line:
+                restOfLine.append(line)
+                (line, result) = self.__getNextParameter(line)
+                if result:
+                    parameters.append(result)
 
             # Skip empty lines
-            if len(parameters) == 0:
+            if not parameters:
                 continue
 
             # Pad with empty values to simplify parsing code
-            while len(parameters) < 9:
+            while len(parameters) < 16:
                 parameters.append("")
 
             # Parse LDraw comments (some of which have special significance)
             if parameters[0] == "0":
+                # Remove any 'NEXT' TEXMAP since we have now found a "0" line
+                self.__removeIfNextTexture()
+
                 if parameters[1] == "!LDRAW_ORG":
                     partType = parameters[2].lower()
                     if 'part' in partType:
@@ -1615,15 +2065,15 @@ class LDrawFile:
                         else:
                             self.bfcCertified = True
                     if "CW" in parameters:
-                        bfcWindingCCW = False
+                        bfc.windingCCW = False
                     if "CCW" in parameters:
-                        bfcWindingCCW = True
+                        bfc.windingCCW = True
                     if "CLIP" in parameters:
-                        bfcLocalCull = True
+                        bfc.localCull = True
                     if "NOCLIP" in parameters:
-                        bfcLocalCull = False
+                        bfc.localCull = False
                     if "INVERTNEXT" in parameters:
-                        bfcInvertNext = True
+                        bfc.invertNext = True
                 if parameters[1] == "SYNTH":
                     if parameters[2] == "SYNTHESIZED":
                         if parameters[3] == "BEGIN":
@@ -1677,51 +2127,37 @@ class LDrawFile:
                                     parameters = []
                                 else:
                                     parameters = parameters[1:]
+                if parameters[1] == 'STEP':
+                    # Any current texture map is ended by a STEP command
+                    self.__removeTextureMap()
 
-
+                if parameters[1] == '!TEXMAP':
+                    if parameters[2] == 'END':
+                        self.__removeTextureMap(self.virtualFullFilepath)
+                        self.inTexMapFallbackSection = False
+                    elif parameters[2] == 'FALLBACK':
+                        self.inTexMapFallbackSection = True
+                    elif parameters[2] == 'START' or parameters[2] == 'NEXT':
+                        if parameters[3] == 'PLANAR':
+                            (x1, y1, z1, x2, y2, z2, x3, y3, z3) = map(float, parameters[4:13])
+                            imageFilename = parameters[13]
+                            textureMap = TextureMap(imageFilename, parameters[2], 'PLANAR', self.virtualFullFilepath, x1, y1, z1, x2, y2, z2, x3, y3, z3)
+                            self.textureMaps.append(textureMap)
+                        elif parameters[3] == 'CYLINDRICAL':
+                            (x1, y1, z1, x2, y2, z2, x3, y3, z3, a) = map(float, parameters[4:14])
+                            imageFilename = parameters[14]
+                            textureMap = TextureMap(imageFilename, parameters[2], 'CYLINDRICAL', self.virtualFullFilepath, x1, y1, z1, x2, y2, z2, x3, y3, z3, a)
+                            self.textureMaps.append(textureMap)
+                        elif parameters[3] == 'SPHERICAL':
+                            (x1, y1, z1, x2, y2, z2, x3, y3, z3, a, b) = map(float, parameters[4:15])
+                            imageFilename = parameters[15]
+                            textureMap = TextureMap(imageFilename, parameters[2], 'SPHERICAL', self.virtualFullFilepath, x1, y1, z1, x2, y2, z2, x3, y3, z3, a, b)
+                            self.textureMaps.append(textureMap)
+                if parameters[1] == '!:':
+                    # Parse the textured geometry
+                    bfc = self.__parseGeometryLine(line, parameters[2:], restOfLine[2:], bfc, processingLSynthParts, currentGroupNames, isGrainySlopeAllowed, parentDir)
             else:
-                if self.bfcCertified is None:
-                    self.bfcCertified = False
-
-                self.isModel = (not self.isPart) and (not self.isSubPart)
-
-                # Parse a File reference
-                if parameters[0] == "1":
-                    (x, y, z, a, b, c, d, e, f, g, h, i) = map(float, parameters[2:14])
-                    (x, y, z) = Math.scaleMatrix @ mathutils.Vector((x, y, z))
-                    localMatrix = mathutils.Matrix( ((a, b, c, x), (d, e, f, y), (g, h, i, z), (0, 0, 0, 1)) )
-
-                    new_filename = " ".join(parameters[14:])
-                    new_colourName = parameters[1]
-
-                    det = localMatrix.determinant()
-                    if det < 0:
-                        bfcInvertNext = not bfcInvertNext
-                    canCullChildNode = (self.bfcCertified or self.isModel) and bfcLocalCull and (det != 0)
-
-                    if new_filename != "":
-                        newNode = LDrawNode(new_filename, False, self.fullFilepath, new_colourName, localMatrix, canCullChildNode, bfcInvertNext, processingLSynthParts, not self.isModel, False, currentGroupNames)
-                        self.childNodes.append(newNode)
-                    else:
-                        printWarningOnce("In file '{0}', the line '{1}' is not formatted corectly (ignoring).".format(self.fullFilepath, line))
-
-                # Parse an edge
-                elif parameters[0] == "2":
-                    self.geometry.parseEdge(parameters)
-
-                # Parse a Face (either a triangle or a quadrilateral)
-                elif parameters[0] == "3" or parameters[0] == "4":
-                    if self.bfcCertified is None:
-                        self.bfcCertified = False
-                    if not self.bfcCertified or not bfcLocalCull:
-                        printWarningOnce("Found double-sided polygons in file {0}".format(self.filename))
-                        self.isDoubleSided = True
-
-                    assert len(self.geometry.faces) == len(self.geometry.faceInfo)
-                    self.geometry.parseFace(parameters, self.bfcCertified and bfcLocalCull, bfcWindingCCW, isGrainySlopeAllowed)
-                    assert len(self.geometry.faces) == len(self.geometry.faceInfo)
-
-                bfcInvertNext = False
+                bfc = self.__parseGeometryLine(line, parameters, restOfLine, bfc, processingLSynthParts, currentGroupNames, isGrainySlopeAllowed, parentDir)
 
         #debugPrint("File {0} is part = {1}, is subPart = {2}, isModel = {3}".format(filename, self.isPart, isSubPart, self.isModel))
 
@@ -1742,8 +2178,8 @@ class BlenderMaterials:
             return name + " Instructions"
         return name
 
-    def __createNodeBasedMaterial(blenderName, col, isSlopeMaterial=False):
-        """Set Cycles Material Values."""
+    def __createNodeBasedMaterial(blenderName, col, isSlopeMaterial=False, image=None):
+        """Create a node based material of whatever type is needed"""
 
         # Reuse current material if it exists, otherwise create a new material
         if bpy.data.materials.get(blenderName) is None:
@@ -1755,6 +2191,7 @@ class BlenderMaterials:
         material.use_nodes = True
 
         if col is not None:
+            # Extend an RGB colour to RGBA
             if len(col["colour"]) == 3:
                 colour = col["colour"] + (1.0,)
             material.diffuse_color = getDiffuseColor(col["colour"][0:3])
@@ -1803,6 +2240,9 @@ class BlenderMaterials:
                 BlenderMaterials.__createCyclesSlopeTexture(nodes, links, 0.6)
             elif Options.curvedWalls and not Options.instructionsLook:
                 BlenderMaterials.__createCyclesConcaveWalls(nodes, links, 20 * globalScaleFactor)
+
+            if image:
+                BlenderMaterials.__createCyclesImageTextureWithAlpha(nodes, links, colour, image)
 
             material["Lego.isTransparent"] = isTransparent
             return material
@@ -1912,7 +2352,7 @@ class BlenderMaterials:
         node.inputs['Color'].default_value = colour
         return node
 
-    def __nodeMix(nodes, factor, x, y):
+    def __nodeMixShader(nodes, factor, x, y):
         node = nodes.new('ShaderNodeMixShader')
         node.location = x, y
         node.inputs['Fac'].default_value = factor
@@ -1920,6 +2360,19 @@ class BlenderMaterials:
 
     def __nodeOutput(nodes, x, y):
         node = nodes.new('ShaderNodeOutputMaterial')
+        node.location = x, y
+        return node
+
+    def __nodeImageTexture(nodes, image, x, y):
+        node = nodes.new('ShaderNodeTexImage')
+        node.image = image
+        node.interpolation = 'Closest'
+        node.location = x, y
+        return node
+
+    def __nodeColorMix(nodes, x, y):
+        node = nodes.new('ShaderNodeMix')
+        node.data_type = 'RGBA'
         node.location = x, y
         return node
 
@@ -2113,6 +2566,17 @@ class BlenderMaterials:
                 return x
         return None
 
+    def __createCyclesImageTextureWithAlpha(nodes, links, colour, image):
+        """Image texture for Cycles render engine"""
+        imageTextureNode = BlenderMaterials.__nodeImageTexture(nodes, image, -500, 50)
+        colourMixNode = BlenderMaterials.__nodeColorMix(nodes, -200, 250)
+        colourMixNode.inputs['A'].default_value = colour
+        out = BlenderMaterials.__getGroup(nodes)
+
+        links.new(imageTextureNode.outputs['Color'], colourMixNode.inputs['B'])
+        links.new(imageTextureNode.outputs['Alpha'], colourMixNode.inputs['Factor'])
+        links.new(colourMixNode.outputs['Result'], out.inputs['Color'])
+
     def __createCyclesConcaveWalls(nodes, links, strength):
         """Concave wall normals for Cycles render engine"""
         node = BlenderMaterials.__nodeConcaveWalls(nodes, strength, -200, 5)
@@ -2235,38 +2699,65 @@ class BlenderMaterials:
         }
 
     # **********************************************************************************
-    def getMaterial(colourName, isSlopeMaterial):
-        pureColourName = colourName
+    def __tryLoadImage(filepath):
+        try:
+            image = bpy.data.images.load(filepath)
+        except RuntimeError as e:
+            image = None
+        return image
+
+    # **********************************************************************************
+    def getMaterial(colourName, isSlopeMaterial, imageFilename, parentDir):
+        postfix = colourName
         if isSlopeMaterial:
-            colourName = colourName + "_s"
+            postfix = colourName + "_s"
+
+        if not Options.instructionsLook and Options.curvedWalls and not isSlopeMaterial:
+            postfix += "_c"
+
+        if imageFilename:
+            postfix += "_" + imageFilename.lower()
+
+        # Create a name for the material based on the colour and texture image
+        if Options.instructionsLook:
+            blenderName = "MatInst_{0}".format(postfix)
+        else:
+            blenderName = "Material_{0}".format(postfix)
 
         # If it's already in the cache, use that
-        if (colourName in BlenderMaterials.__material_list):
-            result = BlenderMaterials.__material_list[colourName]
+        if (blenderName in BlenderMaterials.__material_list):
+            result = BlenderMaterials.__material_list[blenderName]
             return result
-
-        # Create a name for the material based on the colour
-        if Options.instructionsLook:
-            blenderName = "MatInst_{0}".format(colourName)
-        elif Options.curvedWalls and not isSlopeMaterial:
-            blenderName = "Material_{0}_c".format(colourName)
-        else:
-            blenderName = "Material_{0}".format(colourName)
 
         # If the name already exists in Blender, use that
         if Options.overwriteExistingMaterials is False:
             if blenderName in bpy.data.materials:
                 return bpy.data.materials[blenderName]
 
+        image = None
+        if imageFilename:
+            # Load the image
+            image = CachedFiles.get(imageFilename)
+            if not image:
+                # Create full filepath with case sensitivity fixed, with "textures/" prefix
+                fullFilepath = FileSystem.locate(os.path.join("textures", imageFilename), parentDir)
+                image = BlenderMaterials.__tryLoadImage(fullFilepath)
+
+                if not image:
+                    fullFilepath = FileSystem.locate(imageFilename, parentDir)
+                    image = BlenderMaterials.__tryLoadImage(fullFilepath)
+
+                CachedFiles.add(imageFilename, image)
+
         # Create new material
-        col = BlenderMaterials.__getColourData(pureColourName)
-        material = BlenderMaterials.__createNodeBasedMaterial(blenderName, col, isSlopeMaterial)
+        col = BlenderMaterials.__getColourData(colourName)
+        material = BlenderMaterials.__createNodeBasedMaterial(blenderName, col, isSlopeMaterial, image)
 
         if material is None:
             printWarningOnce("Could not create material for blenderName {0}".format(blenderName))
 
         # Add material to cache
-        BlenderMaterials.__material_list[colourName] = material
+        BlenderMaterials.__material_list[blenderName] = material
         return material
 
     # **********************************************************************************
@@ -2646,6 +3137,7 @@ class BlenderMaterials:
             BlenderMaterials.addInputSocket(group,'NodeSocketVectorDirection','Normal')
 
             if Options.instructionsLook:
+                # TODO: What about Alpha?
                 node_emission = BlenderMaterials.__nodeEmission(group.nodes, 0, 0)
                 group.links.new(node_input.outputs['Color'],       node_emission.inputs['Color'])
                 group.links.new(node_emission.outputs['Emission'], node_output.inputs['Shader'])
@@ -2679,10 +3171,10 @@ class BlenderMaterials:
             if Options.instructionsLook:
                 node_emission    = BlenderMaterials.__nodeEmission(group.nodes, 0, 0)
                 node_transparent = BlenderMaterials.__nodeTransparent(group.nodes, 0, 100)
-                node_mix1        = BlenderMaterials.__nodeMix(group.nodes, 0.5, 400, 100)
+                node_mix1        = BlenderMaterials.__nodeMixShader(group.nodes, 0.5, 400, 100)
                 node_light       = BlenderMaterials.__nodeLightPath(group.nodes, 200, 400)
                 node_less        = BlenderMaterials.__nodeMath(group.nodes, 'LESS_THAN', 400, 400)
-                node_mix2        = BlenderMaterials.__nodeMix(group.nodes, 0.5, 600, 300)
+                node_mix2        = BlenderMaterials.__nodeMixShader(group.nodes, 0.5, 600, 300)
 
                 node_output.location = (800,0)
 
@@ -2724,10 +3216,10 @@ class BlenderMaterials:
             if Options.instructionsLook:
                 node_emission    = BlenderMaterials.__nodeEmission(group.nodes, 0, 0)
                 node_transparent = BlenderMaterials.__nodeTransparent(group.nodes, 0, 100)
-                node_mix1        = BlenderMaterials.__nodeMix(group.nodes, 0.5, 400, 100)
+                node_mix1        = BlenderMaterials.__nodeMixShader(group.nodes, 0.5, 400, 100)
                 node_light       = BlenderMaterials.__nodeLightPath(group.nodes, 200, 400)
                 node_less        = BlenderMaterials.__nodeMath(group.nodes, 'LESS_THAN', 400, 400)
-                node_mix2        = BlenderMaterials.__nodeMix(group.nodes, 0.5, 600, 300)
+                node_mix2        = BlenderMaterials.__nodeMixShader(group.nodes, 0.5, 600, 300)
 
                 node_output.location = (800,0)
 
@@ -2743,7 +3235,7 @@ class BlenderMaterials:
                 if BlenderMaterials.usePrincipledShader:
                     node_principled  = BlenderMaterials.__nodePrincipled(group.nodes, 0.0, 0.0, 0.0, 0.05, 0.0, 0.0, 1.585, 1.0, 45, 340)
                     node_emission    = BlenderMaterials.__nodeEmission(group.nodes, 45, -160)
-                    node_mix         = BlenderMaterials.__nodeMix(group.nodes, 0.03, 300, 290)
+                    node_mix         = BlenderMaterials.__nodeMixShader(group.nodes, 0.03, 300, 290)
 
                     node_output.location = 500, 290
 
@@ -2814,7 +3306,7 @@ class BlenderMaterials:
                 node_bump2 = BlenderMaterials.__nodeBumpShader(group.nodes, 1.0, 0.1, 45-184, 340-115)
                 node_subtract = BlenderMaterials.__nodeMath(group.nodes, 'SUBTRACT', 45-570, 340-216)
                 node_principled  = BlenderMaterials.__nodePrincipled(group.nodes, 0.0, 0.0, 0.0, 0.4, 0.03, 0.0, 1.45, 0.0, 45, 340)
-                node_mix = BlenderMaterials.__nodeMix(group.nodes, 0.8, 300, 290)
+                node_mix = BlenderMaterials.__nodeMixShader(group.nodes, 0.8, 300, 290)
                 node_refraction = BlenderMaterials.__nodeRefraction(group.nodes, 0.0, 1.45, 290-242, 154-330)
                 node_input.location = -320, 290
                 node_output.location = 530, 285
@@ -2852,7 +3344,7 @@ class BlenderMaterials:
             BlenderMaterials.addInputSocket(group,'NodeSocketVectorDirection','Normal')
 
             node_emit  = BlenderMaterials.__nodeEmission(group.nodes, -242, -123)
-            node_mix   = BlenderMaterials.__nodeMix(group.nodes, 0.5, 0, 90)
+            node_mix   = BlenderMaterials.__nodeMixShader(group.nodes, 0.5, 0, 90)
 
             if BlenderMaterials.usePrincipledShader:
                 node_main = BlenderMaterials.__nodePrincipled(group.nodes, 1.0, 0.05, 0.0, 0.5, 0.0, 0.03, 1.45, 0.0, -242, 154+240)
@@ -2896,7 +3388,7 @@ class BlenderMaterials:
             else:
                 node_glossyOne = BlenderMaterials.__nodeGlossy(group.nodes, (1,1,1,1), 0.03, 'GGX', -242, 154)
                 node_glossyTwo = BlenderMaterials.__nodeGlossy(group.nodes, (1.0, 1.0, 1.0, 1.0), 0.03, 'BECKMANN', -242, -23)
-                node_mix       = BlenderMaterials.__nodeMix(group.nodes, 0.01, 0, 90)
+                node_mix       = BlenderMaterials.__nodeMixShader(group.nodes, 0.01, 0, 90)
 
                 # link nodes together
                 group.links.new(node_input.outputs['Color'],  node_glossyOne.inputs['Color'])
@@ -2944,7 +3436,7 @@ class BlenderMaterials:
             else:
                 node_diffuse = BlenderMaterials.__nodeDiffuse(group.nodes, 0.0, -242, -23)
                 node_glossy  = BlenderMaterials.__nodeGlossy(group.nodes, (1,1,1,1), 0.05, 'BECKMANN', -242, 154)
-                node_mix     = BlenderMaterials.__nodeMix(group.nodes, 0.4, 0, 90)
+                node_mix     = BlenderMaterials.__nodeMixShader(group.nodes, 0.4, 0, 90)
 
                 # link nodes together
                 group.links.new(node_input.outputs['Color'],  node_diffuse.inputs['Color'])
@@ -2975,7 +3467,7 @@ class BlenderMaterials:
             else:
                 node_dielectric = BlenderMaterials.__nodeDielectric(group.nodes, 0.05, 0.2, 0.0, 1.46, -242, 0)
                 node_glossy = BlenderMaterials.__nodeGlossy(group.nodes, (1,1,1,1), 0.2, 'BECKMANN', -242, 154)
-                node_mix = BlenderMaterials.__nodeMix(group.nodes, 0.4, 0, 90)
+                node_mix = BlenderMaterials.__nodeMixShader(group.nodes, 0.4, 0, 90)
 
                 # link nodes together
                 group.links.new(node_input.outputs['Color'], node_glossy.inputs['Color'])
@@ -3001,7 +3493,7 @@ class BlenderMaterials:
             if BlenderMaterials.usePrincipledShader:
                 node_voronoi     = BlenderMaterials.__nodeVoronoi(group.nodes, 100, -222, 310)
                 node_gamma       = BlenderMaterials.__nodeGamma(group.nodes, 50, 0, 200)
-                node_mix         = BlenderMaterials.__nodeMix(group.nodes, 0.05, 210, 90+25)
+                node_mix         = BlenderMaterials.__nodeMixShader(group.nodes, 0.05, 210, 90+25)
                 node_principled1 = BlenderMaterials.__nodePrincipled(group.nodes, 0.0, 0.0, 0.0, 0.2, 0.0, 0.03, 1.585, 1.0, 45-270, 340-210)
                 node_principled2 = BlenderMaterials.__nodePrincipled(group.nodes, 0.0, 0.0, 0.0, 0.5, 0.0, 0.03, 1.45, 0.0, 45-270, 340-750)
 
@@ -3020,8 +3512,8 @@ class BlenderMaterials:
                 node_diffuse = BlenderMaterials.__nodeDiffuse(group.nodes, 0.0, -12, -49)
                 node_voronoi = BlenderMaterials.__nodeVoronoi(group.nodes, 100, -232, 310)
                 node_gamma   = BlenderMaterials.__nodeGamma(group.nodes, 50, 0, 200)
-                node_mixOne  = BlenderMaterials.__nodeMix(group.nodes, 0.05, 0, 90)
-                node_mixTwo  = BlenderMaterials.__nodeMix(group.nodes, 0.5, 200, 90)
+                node_mixOne  = BlenderMaterials.__nodeMixShader(group.nodes, 0.05, 0, 90)
+                node_mixTwo  = BlenderMaterials.__nodeMixShader(group.nodes, 0.5, 200, 90)
 
                 # link nodes together
                 group.links.new(node_input.outputs['Color'], node_glass.inputs['Color'])
@@ -3052,7 +3544,7 @@ class BlenderMaterials:
             if BlenderMaterials.usePrincipledShader:
                 node_voronoi     = BlenderMaterials.__nodeVoronoi(group.nodes, 50, -222, 310)
                 node_gamma       = BlenderMaterials.__nodeGamma(group.nodes, 3.5, 0, 200)
-                node_mix         = BlenderMaterials.__nodeMix(group.nodes, 0.05, 210, 90+25)
+                node_mix         = BlenderMaterials.__nodeMixShader(group.nodes, 0.05, 210, 90+25)
                 node_principled1 = BlenderMaterials.__nodePrincipled(group.nodes, 0.0, 0.0, 0.0, 0.1, 0.0, 0.03, 1.45, 0.0, 45-270, 340-210)
                 node_principled2 = BlenderMaterials.__nodePrincipled(group.nodes, 0.0, 0.0, 1.0, 0.5, 0.0, 0.03, 1.45, 0.0, 45-270, 340-750)
 
@@ -3071,8 +3563,8 @@ class BlenderMaterials:
                 node_diffuseTwo = BlenderMaterials.__nodeDiffuse(group.nodes, 0.0, -12, -49)
                 node_voronoi    = BlenderMaterials.__nodeVoronoi(group.nodes, 100, -232, 310)
                 node_gamma      = BlenderMaterials.__nodeGamma(group.nodes, 20, 0, 200)
-                node_mixOne     = BlenderMaterials.__nodeMix(group.nodes, 0.2, 0, 90)
-                node_mixTwo     = BlenderMaterials.__nodeMix(group.nodes, 0.5, 200, 90)
+                node_mixOne     = BlenderMaterials.__nodeMixShader(group.nodes, 0.2, 0, 90)
+                node_mixTwo     = BlenderMaterials.__nodeMixShader(group.nodes, 0.5, 200, 90)
 
                 # link nodes together
                 group.links.new(node_input.outputs['Color'], node_diffuseOne.inputs['Color'])
@@ -3102,7 +3594,7 @@ class BlenderMaterials:
             if BlenderMaterials.usePrincipledShader:
                 node_principled = BlenderMaterials.__nodePrincipled(group.nodes, 1.0, 0.05, 0.0, 0.5, 0.0, 0.03, 1.45, 0.0, 45-270, 340-210)
                 node_translucent = BlenderMaterials.__nodeTranslucent(group.nodes, -225, -382)
-                node_mix = BlenderMaterials.__nodeMix(group.nodes, 0.5, 65, -40)
+                node_mix = BlenderMaterials.__nodeMixShader(group.nodes, 0.5, 65, -40)
 
                 group.links.new(node_input.outputs['Color'], node_principled.inputs['Base Color'])
                 group.links.new(node_input.outputs['Color'], BlenderMaterials.__getSubsurfaceColor(node_principled))
@@ -3115,8 +3607,8 @@ class BlenderMaterials:
                 node_diffuse = BlenderMaterials.__nodeDiffuse(group.nodes, 0.0, -242, 90)
                 node_trans   = BlenderMaterials.__nodeTranslucent(group.nodes, -242, -46)
                 node_glossy  = BlenderMaterials.__nodeGlossy(group.nodes, (1,1,1,1), 0.5, 'BECKMANN', -42, -54)
-                node_mixOne  = BlenderMaterials.__nodeMix(group.nodes, 0.4, -35, 90)
-                node_mixTwo  = BlenderMaterials.__nodeMix(group.nodes, 0.2, 175, 90)
+                node_mixOne  = BlenderMaterials.__nodeMixShader(group.nodes, 0.4, -35, 90)
+                node_mixTwo  = BlenderMaterials.__nodeMixShader(group.nodes, 0.2, 175, 90)
 
                 # link nodes together
                 group.links.new(node_input.outputs['Color'],  node_diffuse.inputs['Color'])
@@ -3651,6 +4143,26 @@ def createMesh(name, meshName, geometry):
 
             mesh.from_pydata(points, [], geometry.faces)
 
+            if geometry.uvs and any(elem is not None for elem in geometry.uvs):
+                mesh.uv_layers.new(name="lego_texture")
+
+                # It seems that the only way to set UVs is via bmesh:
+                bm = bmesh.new()
+                bm.from_mesh(mesh)
+                bm.faces.ensure_lookup_table()
+
+                uv_layer = bm.loops.layers.uv[0]
+
+                for f in bm.faces:
+                    for l in f.loops:
+                        if geometry.uvs[l.vert.index]:
+                            # Sanity check
+                            if l.vert.index < len(geometry.uvs):
+                                l[uv_layer].uv = geometry.uvs[l.vert.index]
+                            else:
+                                printWarningOnce("Ooops! Something is wrong with the UVs")
+                bm.to_mesh(mesh)
+
             mesh.validate()
             mesh.update()
 
@@ -3674,7 +4186,7 @@ def createMesh(name, meshName, geometry):
                 # For debugging purposes, we can make sloped faces blue:
                 # if isSlopeMaterial:
                 #     faceColour = "1"
-                material = BlenderMaterials.getMaterial(faceColour, isSlopeMaterial)
+                material = BlenderMaterials.getMaterial(faceColour, isSlopeMaterial, faceInfo.textureMap.imageFilename if faceInfo.textureMap else None, faceInfo.parentDir)
 
                 if material is not None:
                     if mesh.materials.get(material.name) is None:
@@ -3746,10 +4258,13 @@ def smoothShadingAndFreestyleEdges(ob):
 def createBlenderObjectsFromNode(node,
                                  localMatrix,
                                  name,
+                                 topLevelNode,
                                  realColourName=Options.defaultColour,
                                  blenderParentTransform=Math.identityMatrix,
                                  localToWorldSpaceMatrix=Math.identityMatrix,
-                                 blenderNodeParent=None):
+                                 blenderNodeParent=None,
+                                 textureMap=None,
+                                 textureMapMatrix=None):
     """
     Creates a Blender Object for the node given and (recursively) for all it's children as required.
     Creates and optimises the mesh for each object too.
@@ -3764,7 +4279,7 @@ def createBlenderObjectsFromNode(node,
 
     if node.isBlenderObjectNode():
         ourColourName = LDrawNode.resolveColour(node.colourName, realColourName)
-        meshName, geometry = node.getBlenderGeometry(ourColourName, name)
+        meshName, geometry = node.getBlenderGeometry(ourColourName, name, textureMap, textureMapMatrix, topLevelNode)
         mesh, newMeshCreated = createMesh(name, meshName, geometry)
 
         # Format a name for the Blender Object
@@ -3779,14 +4294,11 @@ def createBlenderObjectsFromNode(node,
         ob.matrix_local = blenderParentTransform @ localMatrix
 
         if newMeshCreated:
-            # For performance reasons we try to avoid using bpy.ops.* methods
-            # (e.g. we use bmesh.* operations instead).
-            # See discussion: http://blender.stackexchange.com/questions/7358/python-performance-with-blender-operators
-
             # Use bevel weights (added to sharp edges) - Only available for Blender version < 3.4
             if hasattr(ob.data, "use_customdata_edge_bevel"):
                 ob.data.use_customdata_edge_bevel = True
             else:
+                # Not needed in Blender 4
                 if bpy.app.version < (4, 0, 0):
                     # Add to scene
                     linkToScene(ob)
@@ -3818,7 +4330,7 @@ def createBlenderObjectsFromNode(node,
         ob["Lego.isTransparent"] = False
         if mesh is not None:
             for faceInfo in geometry.faceInfo:
-                material = BlenderMaterials.getMaterial(faceInfo.faceColour, False)
+                material = BlenderMaterials.getMaterial(faceInfo.faceColour, False, faceInfo.textureMap.imageFilename if faceInfo.textureMap else None, faceInfo.parentDir)
                 if material is not None:
                     if "Lego.isTransparent" in material:
                         if material["Lego.isTransparent"]:
@@ -3970,7 +4482,14 @@ def createBlenderObjectsFromNode(node,
     for childNode in node.file.childNodes:
         # Create sub-objects recursively
         childColourName = LDrawNode.resolveColour(childNode.colourName, realColourName)
-        createBlenderObjectsFromNode(childNode, childNode.matrix, childNode.filename, childColourName, blenderParentTransform, localToWorldSpaceMatrix @ localMatrix, blenderNodeParent)
+        if textureMap:
+            childTextureMap = textureMap
+            childTextureMapMatrix = textureMapMatrix @ childNode.matrix
+        else:
+            childTextureMap = childNode.textureMap
+            childTextureMapMatrix = Math.identityMatrix
+
+        createBlenderObjectsFromNode(childNode, childNode.matrix, childNode.filename, False, childColourName, blenderParentTransform, localToWorldSpaceMatrix @ localMatrix, blenderNodeParent, childTextureMap, childTextureMapMatrix)
 
     return ob
 
@@ -3979,7 +4498,7 @@ def addFileToCache(relativePath, name):
     """Loads and caches an LDraw file in the cache of files"""
 
     file = LDrawFile(relativePath, False, "", None, True)
-    CachedFiles.addToCache(name, file)
+    CachedFiles.add(name, file)
     return True
 
 # **************************************************************************************
@@ -4136,12 +4655,17 @@ def createCollection(scene, name):
 
 # **************************************************************************************
 def setupInstructionsLook():
+    global globalHasCollections
+
     scene = bpy.context.scene
     render = scene.render
     render.use_freestyle = True
 
-    # Use Blender Eevee for instructions look
-    render.engine = 'BLENDER_EEVEE'
+    # Use Blender Eevee (or Eevee Next) for instructions look
+    try:
+        render.engine = 'BLENDER_EEVEE'
+    except:
+        render.engine = 'BLENDER_EEVEE_NEXT'
 
     # Change camera to Orthographic
     if scene.camera is not None:
@@ -4160,7 +4684,7 @@ def setupInstructionsLook():
         scene.cycles.transparent_max_bounces = 80
 
     # Add collections / groups, if not already present
-    if hasCollections:
+    if globalHasCollections:
         createCollection(scene, 'Black Edged Bricks Collection')
         createCollection(scene, 'White Edged Bricks Collection')
         createCollection(scene, 'Solid Bricks Collection')
@@ -4480,10 +5004,21 @@ def getConvexHull(minPoints = 3):
         bm.free()
 
 # **************************************************************************************
+def look_at_selected_object():
+    areas = [area for area in bpy.context.window.screen.areas if area.type == 'VIEW_3D']
+    if len(areas) > 0:
+        context_override = bpy.context.copy()
+        context_override['area'] = areas[0]
+        context_override['region'] = [region for region in areas[0].regions if region.type == 'WINDOW'][0]
+        with bpy.context.temp_override(**context_override):
+            bpy.ops.view3d.view_selected()
+
+# **************************************************************************************
 def loadFromFile(context, filename, isFullFilepath=True):
     global globalCamerasToAdd
     global globalContext
     global globalScaleFactor
+    global globalHasCollections
 
     # Set global scale factor
     # -----------------------
@@ -4521,6 +5056,8 @@ def loadFromFile(context, filename, isFullFilepath=True):
     globalCamerasToAdd = []
     globalContext = context
 
+    globalHasCollections = hasattr(bpy.data, "collections")
+
     # Make sure we have the latest configuration, including the latest ldraw directory
     # and the colours derived from that.
     Configure()
@@ -4532,9 +5069,11 @@ def loadFromFile(context, filename, isFullFilepath=True):
         return None
 
     # Clear caches
-    CachedDirectoryFilenames.clearCache()
-    CachedFiles.clearCache()
-    CachedGeometry.clearCache()
+    CachedDirectoryFilenames.clear()
+    CachedFiles.clear()
+    CachedFilepaths.clear()
+    CachedGeometry.clear()
+    CachedTextureMaps.clear()
     BlenderMaterials.clearCache()
     Configure.warningSuppression = {}
 
@@ -4551,7 +5090,7 @@ def loadFromFile(context, filename, isFullFilepath=True):
         addFileToCache("stud15-logo" + Options.logoStudVersion + ".dat", "stud15.dat")
         addFileToCache("stud20-logo" + Options.logoStudVersion + ".dat", "stud20.dat")
         addFileToCache("studa-logo"  + Options.logoStudVersion + ".dat", "studa.dat")
-        addFileToCache("studtente-logo.dat", "s\\teton.dat")     # TENTE
+        addFileToCache("studtente-logo.dat", os.path.join("s", "teton.dat"))     # TENTE
 
     # Load and parse file to create geometry
     filename = os.path.expanduser(filename)
@@ -4563,11 +5102,12 @@ def loadFromFile(context, filename, isFullFilepath=True):
 
     if node.file.isModel:
         # Fix top level rotation from LDraw coordinate space to Blender coordinate space
-        node.file.geometry.points = [Math.rotationMatrix * p for p in node.file.geometry.points]
+        node.file.geometry.points = [Math.rotationMatrix @ p for p in node.file.geometry.points]
         node.file.geometry.edges  = [(Math.rotationMatrix @ e[0], Math.rotationMatrix @ e[1]) for e in node.file.geometry.edges]
 
         for childNode in node.file.childNodes:
             childNode.matrix = Math.rotationMatrix @ childNode.matrix
+
 
     # Switch to Object mode and deselect all
     if bpy.ops.object.mode_set.poll():
@@ -4589,7 +5129,7 @@ def loadFromFile(context, filename, isFullFilepath=True):
 
     # Create Blender objects from the loaded file
     debugPrint("Creating Blender objects")
-    rootOb = createBlenderObjectsFromNode(node, node.matrix, name)
+    rootOb = createBlenderObjectsFromNode(node, node.matrix, name, topLevelNode=True)
 
     if not node.file.isModel:
         if rootOb.data:
@@ -4613,11 +5153,10 @@ def loadFromFile(context, filename, isFullFilepath=True):
         else:
             scene.camera.data.type = 'PERSP'
 
-    # Centre object only if root node is a model
-    if node.file.isModel and globalPoints:
+    if globalPoints:
         # Calculate our bounding box in global coordinate space
-        boundingBoxMin = mathutils.Vector((0, 0, 0))
-        boundingBoxMax = mathutils.Vector((0, 0, 0))
+        boundingBoxMin = globalPoints[0].copy()
+        boundingBoxMax = globalPoints[0].copy()
 
         boundingBoxMin[0] = min(p[0] for p in globalPoints)
         boundingBoxMin[1] = min(p[1] for p in globalPoints)
@@ -4632,7 +5171,9 @@ def loadFromFile(context, filename, isFullFilepath=True):
 
         vcentre = (boundingBoxMin + boundingBoxMax) * 0.5
         offsetToCentreModel = mathutils.Vector((-vcentre.x, -vcentre.y, -boundingBoxMin.z))
-        if Options.positionObjectOnGroundAtOrigin:
+
+        # Centre object only if root node is a model (i.e. not a single part)
+        if Options.positionObjectOnGroundAtOrigin and node.file.isModel:
             debugPrint("Centre object")
             rootOb.location += offsetToCentreModel
 
@@ -4645,40 +5186,31 @@ def loadFromFile(context, filename, isFullFilepath=True):
             globalPoints = [p + offsetToCentreModel for p in globalPoints]
             offsetToCentreModel = mathutils.Vector((0, 0, 0))
 
-        if camera is not None:
-            if Options.positionCamera:
-                debugPrint("Positioning Camera")
+        # Position camera
+        if camera and Options.positionCamera:
+            debugPrint("Positioning Camera")
 
-                camera.data.clip_start = 25 * globalScaleFactor            # 0.01 at normal scale
-                camera.data.clip_end   = 250000 * globalScaleFactor        # 100 at normal scale
+            camera.data.clip_start = 25 * globalScaleFactor            # 0.01 at normal scale
+            camera.data.clip_end   = 250000 * globalScaleFactor        # 100 at normal scale
 
-                # Set up a default camera position and rotation
-                camera.location = mathutils.Vector((6.5, -6.5, 4.75))
-                camera.location.normalize()
-                camera.location = camera.location * boundingBoxDistance
-                camera.rotation_mode = 'XYZ'
-                camera.rotation_euler = mathutils.Euler((1.0471975803375244, 0.0, 0.7853981852531433), 'XYZ')
+            # Set up a default camera position and rotation
+            camera.location = mathutils.Vector((6.5, -6.5, 4.75))
+            camera.location.normalize()
+            camera.location = camera.location * boundingBoxDistance
+            camera.rotation_mode = 'XYZ'
+            camera.rotation_euler = mathutils.Euler((1.0471975803375244, 0.0, 0.7853981852531433), 'XYZ')
 
-                # Must have at least three vertices to move the camera
-                if len(globalPoints) >= 3:
-                    isOrtho = camera.data.type == 'ORTHO'
-                    if isOrtho:
-                        iterateCameraPosition(camera, render, vcentre, True)
-                    else:
-                        for i in range(20):
-                            error = iterateCameraPosition(camera, render, vcentre, True)
-                            if (error < 0.001):
-                                break
-
-        # Find the (first) 3D View, then set the view's 'look at' and 'distance'
-        # Note: Not a camera object, but the point of view in the UI.
-        areas = [area for area in bpy.context.window.screen.areas if area.type == 'VIEW_3D']
-        if len(areas) > 0:
-            area = areas[0]
-            with bpy.context.temp_override(area=area):
-                view3d = bpy.context.space_data
-                view3d.region_3d.view_location = boundingBoxCentre      # Where to look at
-                view3d.region_3d.view_distance = boundingBoxDistance    # How far from target
+            # Must have at least three vertices to move the camera
+            if len(globalPoints) >= 3:
+                isOrtho = camera.data.type == 'ORTHO'
+                if isOrtho:
+                    iterateCameraPosition(camera, render, vcentre, True)
+                else:
+                    for i in range(20):
+                        error = iterateCameraPosition(camera, render, vcentre, True)
+                        if (error < 0.001):
+                            break
+            camera.location += offsetToCentreModel
 
     # Get existing object names
     sceneObjectNames = [x.name for x in scene.objects]
@@ -4712,9 +5244,6 @@ def loadFromFile(context, filename, isFullFilepath=True):
 
     globalObjectsToAdd = []
     globalCamerasToAdd = []
-
-    # Select the newly created root object
-    selectObject(rootOb)
 
     # Get existing object names
     sceneObjectNames = [x.name for x in scene.objects]
@@ -4770,6 +5299,13 @@ def loadFromFile(context, filename, isFullFilepath=True):
     # Delete the temporary directory if there was one
     if Configure.tempDir:
         Configure.tempDir.cleanup()
+
+    # Select the newly created root object
+    bpy.ops.object.select_all(action='DESELECT')
+    selectObject(rootOb, True)
+    # Look at the selected object with the UI camera (not the camera object)
+    if Options.positionCamera:
+        look_at_selected_object()
 
     debugPrint("Load Done")
     return rootOb
