@@ -176,6 +176,12 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         )
     )
 
+    defaultColour: StringProperty(
+        name="Default Colour on Import:",
+        description="Default colour used on Import. Default: 4 (Red)",
+        default=prefs.get("defaultColour", "4")
+    )
+
     addGaps: BoolProperty(
         name="Add space between each part:",
         description="Add a small space between each part",
@@ -305,6 +311,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         box.prop(self, "cameraBorderPercentage")
 
         box.prop(self, "colourScheme", expand=True)
+        box.prop(self, "defaultColour")
         box.prop(self, "resPrims", expand=True)
         box.prop(self, "smoothParts")
         box.prop(self, "bevelEdges")
@@ -339,6 +346,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("bevelWidth",            self.bevelWidth)
         ImportLDrawOps.prefs.set("useLook",               self.look)
         ImportLDrawOps.prefs.set("useColourScheme",       self.colourScheme)
+        ImportLDrawOps.prefs.set("defaultColour",         self.defaultColour)
         ImportLDrawOps.prefs.set("gaps",                  self.addGaps)
         ImportLDrawOps.prefs.set("realGapWidth",          self.gapWidthMM / 1000)
         ImportLDrawOps.prefs.set("curvedWalls",           self.curvedWalls)
@@ -365,7 +373,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.Options.realScale                  = self.realScale
         loadldraw.Options.useUnofficialParts         = self.useUnofficialParts
         loadldraw.Options.resolution                 = self.resPrims
-        loadldraw.Options.defaultColour              = "4"
+        loadldraw.Options.defaultColour              = self.defaultColour
         loadldraw.Options.createInstances            = self.linkParts
         loadldraw.Options.instructionsLook           = self.look == "instructions"
         loadldraw.Options.useColourScheme            = self.colourScheme
