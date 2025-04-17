@@ -1183,12 +1183,12 @@ class LDrawGeometry:
 class LDrawNode:
     """A node in the hierarchy. References one LDrawFile"""
 
-    def __init__(self, filename, isFullFilepath, parentFilepath, colourName=Options.defaultColour, matrix=Math.identityMatrix, bfcCull=True, bfcInverted=False, isLSynthPart=False, isSubPart=False, isRootNode=True, groupNames=[]):
+    def __init__(self, filename, isFullFilepath, parentFilepath, colourName=None, matrix=Math.identityMatrix, bfcCull=True, bfcInverted=False, isLSynthPart=False, isSubPart=False, isRootNode=True, groupNames=[]):
         self.filename       = filename
         self.isFullFilepath = isFullFilepath
         self.parentFilepath = parentFilepath
         self.matrix         = matrix
-        self.colourName     = colourName
+        self.colourName     = colourName or Options.defaultColour
         self.bfcInverted    = bfcInverted
         self.bfcCull        = bfcCull
         self.file           = None
@@ -3746,7 +3746,7 @@ def smoothShadingAndFreestyleEdges(ob):
 def createBlenderObjectsFromNode(node,
                                  localMatrix,
                                  name,
-                                 realColourName=Options.defaultColour,
+                                 realColourName=None,
                                  blenderParentTransform=Math.identityMatrix,
                                  localToWorldSpaceMatrix=Math.identityMatrix,
                                  blenderNodeParent=None):
@@ -3760,6 +3760,7 @@ def createBlenderObjectsFromNode(node,
     global globalWeldDistance
     global globalPoints
 
+    realColourName = realColourName or Options.defaultColour
     ob = None
 
     if node.isBlenderObjectNode():
