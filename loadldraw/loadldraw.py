@@ -426,13 +426,13 @@ class Configure:
 
         # Search unofficial parts
         if Options.useUnofficialParts:
-            Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "parts"))
+            Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "UnOfficial", "parts"))
 
             if Options.resolution == "High":
-                Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "p", "48"))
+                Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "UnOfficial", "p", "48"))
             elif Options.resolution == "Low":
-                Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "p", "8"))
-            Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "p"))
+                Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "UnOfficial", "p", "8"))
+            Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "UnOfficial", "p"))
 
             # Add 'Tente' parts too
             Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "tente", "parts"))
@@ -448,7 +448,7 @@ class Configure:
             if Options.LSynthDirectory != "":
                 Configure.appendPath(Options.LSynthDirectory)
             else:
-                Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "lsynth"))
+                Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "Unofficial", "lsynth"))
             debugPrint("Use LSynth Parts requested")
 
         # Search official parts
