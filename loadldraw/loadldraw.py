@@ -677,8 +677,10 @@ class LegoColours:
                         subline = line_split[line_split.index("MATERIAL"):]
 
                         colour["material"]         = LegoColours.__getValue(subline, "MATERIAL")
+                        colour["fabric"]           = LegoColours.__getValue(subline, "FABRIC")
                         hexDigits                  = LegoColours.__getValue(subline, "VALUE")[1:]
-                        colour["secondary_colour"] = LegoColours.hexDigitsToLinearRGBA(hexDigits, 1.0)
+                        if hexDigits is not None:
+                            colour["secondary_colour"] = LegoColours.hexDigitsToLinearRGBA(hexDigits, 1.0)
                         colour["fraction"]         = LegoColours.__getValue(subline, "FRACTION")
                         colour["vfraction"]        = LegoColours.__getValue(subline, "VFRACTION")
                         colour["size"]             = LegoColours.__getValue(subline, "SIZE")
