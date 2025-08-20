@@ -677,8 +677,17 @@ class LegoColours:
                         subline = line_split[line_split.index("MATERIAL"):]
 
                         colour["material"]         = LegoColours.__getValue(subline, "MATERIAL")
-                        hexDigits                  = LegoColours.__getValue(subline, "VALUE")[1:]
-                        colour["secondary_colour"] = LegoColours.hexDigitsToLinearRGBA(hexDigits, 1.0)
+
+                        # current `FABRIC [VELVET | CANVAS | STRING | FUR]` is not yet supported.
+                        if colour["material"] == "FABRIC":
+                            debugPrint(f"Unsupported material finish: {colour['material']} for [colour: {name} code: {code}] in line: {subline}")
+
+                        # Note, not all finishes have a secondary value
+                        finishValue                    = LegoColours.__getValue(subline, "VALUE")
+                        if finishValue is not None:
+                            hexDigits                  = finishValue[1:]
+                            colour["secondary_colour"] = LegoColours.hexDigitsToLinearRGBA(hexDigits, 1.0)
+
                         colour["fraction"]         = LegoColours.__getValue(subline, "FRACTION")
                         colour["vfraction"]        = LegoColours.__getValue(subline, "VFRACTION")
                         colour["size"]             = LegoColours.__getValue(subline, "SIZE")
