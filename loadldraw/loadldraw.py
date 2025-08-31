@@ -1074,7 +1074,6 @@ class LDrawGeometry:
         self.faces = []
         self.faceInfo = []
         self.edges = []
-        self.edgeIndices = []
 
     def parseFace(self, parameters, cull, ccw, isGrainySlopeAllowed):
         """Parse a face from parameters"""
@@ -1182,8 +1181,10 @@ class LDrawGeometry:
 
         # Append edge information
         newEdges = []
+        allowBevelWeight = not isStudLogo
+
         for edge in geometry.edges:
-            newEdges.append( (fixedMatrix @ edge[0], fixedMatrix @ edge[1]) )
+            newEdges.append( (fixedMatrix @ edge[0], fixedMatrix @ edge[1], allowBevelWeight) )
         self.edges.extend(newEdges)
 
 
@@ -1436,17 +1437,31 @@ class LDrawFile:
             # It's the 'model.ldr' file we want to use
             filepath = os.path.join(directory_to_extract_to, "model.ldr")
 
-            # Add the subdirectories of the directory to the search paths
-            Configure.appendPath(os.path.join(directory_to_extract_to, "CustomParts"))
-            Configure.appendPath(os.path.join(directory_to_extract_to, "CustomParts", "parts"))
+            # Add the subdirectories of the directory to the search paths, notably 'CustomParts' and it's subdirectories
 
-            if Options.resolution == "High":
-                Configure.appendPath(os.path.join(directory_to_extract_to, "CustomParts", "p", "48"))
-            elif Options.resolution == "Low":
-                Configure.appendPath(os.path.join(directory_to_extract_to, "CustomParts", "p", "8"))
-            Configure.appendPath(os.path.join(directory_to_extract_to, "CustomParts", "p"))
-            Configure.appendPath(os.path.join(directory_to_extract_to, "CustomParts", "s"))
-            Configure.appendPath(os.path.join(directory_to_extract_to, "CustomParts", "s", "s"))
+            # Also add the Stud.io 'local' directory for its 'CustomParts' folder
+            if Configure.isWindows:
+                # But also search CustomParts in: C:\Users\<USERNAME>\AppData\Local\Stud.io\
+                localDir = os.path.expanduser(os.path.join("~", "AppData", "Local", "Stud.io"))
+            elif Configure.isMac:
+                # But also search CustomParts in: ~/.local/share/Stud.io/
+                localDir = os.path.expanduser(os.path.join("~", ".local", "share", "Stud.io"))
+            else:
+                # No Stud.io for Linux
+                localDir = None
+
+            for direct in [directory_to_extract_to, localDir]:
+                if direct:
+                    Configure.appendPath(os.path.join(direct, "CustomParts"))
+                    Configure.appendPath(os.path.join(direct, "CustomParts", "parts"))
+
+                    if Options.resolution == "High":
+                        Configure.appendPath(os.path.join(direct, "CustomParts", "p", "48"))
+                    elif Options.resolution == "Low":
+                        Configure.appendPath(os.path.join(direct, "CustomParts", "p", "8"))
+                    Configure.appendPath(os.path.join(direct, "CustomParts", "p"))
+                    Configure.appendPath(os.path.join(direct, "CustomParts", "s"))
+                    Configure.appendPath(os.path.join(direct, "CustomParts", "s", "s"))
 
         self.fullFilepath = filepath
 
@@ -1508,10 +1523,10 @@ class LDrawFile:
 
         return True
 
-    def __isStud(filename):
+    def isStud(filename):
         """Is this file a stud?"""
 
-        if LDrawFile.__isStudLogo(filename):
+        if LDrawFile.isStudLogo(filename):
             return True
 
         # Extract just the filename, in lower case
@@ -1542,7 +1557,7 @@ class LDrawFile:
             "studtente-logo.dat"    # TENTE
              )
 
-    def __isStudLogo(filename):
+    def isStudLogo(filename):
         """Is this file a stud logo?"""
 
         # Extract just the filename, in lower case
@@ -1561,8 +1576,8 @@ class LDrawFile:
         self.lines            = lines
         self.isPart           = False
         self.isSubPart        = isSubPart
-        self.isStud           = LDrawFile.__isStud(filename)
-        self.isStudLogo       = LDrawFile.__isStudLogo(filename)
+        self.isStud           = LDrawFile.isStud(filename)
+        self.isStudLogo       = LDrawFile.isStudLogo(filename)
         self.isLSynthPart     = False
         self.isDoubleSided    = False
         self.geometry         = LDrawGeometry()
@@ -3172,10 +3187,10 @@ class BlenderMaterials:
 
 
 # **************************************************************************************
-def addSharpEdges(bm, geometry, filename):
+def addSharpEdges(bm, ob, geometry, filename):
     if geometry.edges:
-        global globalWeldDistance
-        epsilon = globalWeldDistance
+        global globalScaleFactor
+        epsilon = 1 * globalScaleFactor
 
         bm.faces.ensure_lookup_table()
         bm.verts.ensure_lookup_table()
@@ -3212,7 +3227,7 @@ def addSharpEdges(bm, geometry, filename):
                 # Make edge sharp
                 meshEdge.smooth = False
 
-        # Set bevel weights
+        # Set bevel weights (Blender 3)
         if bpy.app.version < (4, 0, 0):
             # Blender 3
             # Find layer for bevel weights
@@ -3231,7 +3246,18 @@ def addSharpEdges(bm, geometry, filename):
                     if bwLayer is not None:
                         meshEdge[bwLayer] = 1.0
 
-        return edgeIndices
+        bm.to_mesh(ob.data)
+
+        # In Blender 4, set the edge weights (on ob.data rather than bm these days)
+        if (bpy.app.version >= (4, 0, 0)):
+            # Blender 4
+            bevel_weight_attr = ob.data.attributes.new("bevel_weight_edge", "FLOAT", "EDGE")
+            for idx, meshEdge in enumerate(bm.edges):
+                v0 = meshEdge.verts[0].index
+                v1 = meshEdge.verts[1].index
+                if (v0, v1) in edgeIndices:
+                    bevel_weight_attr.data[idx].value = 1.0
+
 
 # Commented this next section out as it fails for certain pieces.
 
@@ -3887,20 +3913,8 @@ def createBlenderObjectsFromNode(node,
             if recalculateNormals:
                 bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
 
-            # Add sharp edges (and edge weights in Blender 3)
-            edgeIndices = addSharpEdges(bm, geometry, name)
-
-            bm.to_mesh(ob.data)
-
-            # In Blender 4, set the edge weights (on ob.data rather than bm these days)
-            if (bpy.app.version >= (4, 0, 0)) and edgeIndices:
-                # Blender 4
-                bevel_weight_attr = ob.data.attributes.new("bevel_weight_edge", "FLOAT", "EDGE")
-                for idx, meshEdge in enumerate(bm.edges):
-                    v0 = meshEdge.verts[0].index
-                    v1 = meshEdge.verts[1].index
-                    if (v0, v1) in edgeIndices:
-                        bevel_weight_attr.data[idx].value = 1.0
+            # Add sharp edges and edge weights
+            addSharpEdges(bm, ob, geometry, name)
 
             bm.clear()
             bm.free()
