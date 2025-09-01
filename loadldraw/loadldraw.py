@@ -379,6 +379,7 @@ class Math:
         (0.0, 0.0, -1.0, 0.0),
         (0.0, 0.0, 0.0, 1.0)
     ))
+    studMinimalTranslationMatrix = mathutils.Matrix.Translation((0.0, -0.0001, 0))
 
     def clamp01(value):
         return max(min(value, 1.0), 0.0)
@@ -404,65 +405,78 @@ class Configure:
     Stores warning messages we have already seen so we don't see them again.
     """
 
-    searchPaths = []
+    localSearchPaths = []
+    officialSearchPaths = []
+    unofficialSearchPaths = []
     warningSuppression = {}
     tempDir = None
 
-    def appendPath(path):
+    def appendLocalPath(path):
         if os.path.exists(path):
-            Configure.searchPaths.append(path)
+            Configure.localSearchPaths.append(path)
+
+    def appendOfficialPath(path):
+        if os.path.exists(path):
+            Configure.officialSearchPaths.append(path)
+
+    def appendUnofficialPath(path):
+        if os.path.exists(path):
+            Configure.unofficialSearchPaths.append(path)
 
     def __setSearchPaths():
-        Configure.searchPaths = []
+        Configure.localSearchPaths = []
+        Configure.officialSearchPaths = []
+        Configure.unofficialSearchPaths = []
 
         # Always search for parts in the 'models' folder
-        Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "models"))
+        Configure.appendOfficialPath(os.path.join(Configure.ldrawInstallDirectory, "models"))
 
-        # Search for stud logo parts
+        # Search for stud logo parts first since we want our local stud files to take priority
+        # (Our local studs include versions with the 'LEGO' logo)
         if Options.useLogoStuds and Options.studLogoDirectory != "":
             if Options.resolution == "Low":
-                Configure.appendPath(os.path.join(Options.studLogoDirectory, "8"))
-            Configure.appendPath(Options.studLogoDirectory)
-
-        # Search unofficial parts
-        if Options.useUnofficialParts:
-            Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "parts"))
-
-            if Options.resolution == "High":
-                Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "p", "48"))
-            elif Options.resolution == "Low":
-                Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "p", "8"))
-            Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "p"))
-
-            # Add 'Tente' parts too
-            Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "tente", "parts"))
-
-            if Options.resolution == "High":
-                Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "tente", "p", "48"))
-            elif Options.resolution == "Low":
-                Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "tente", "p", "8"))
-            Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "tente", "p"))
-
-        # Search LSynth parts
-        if Options.useLSynthParts:
-            if Options.LSynthDirectory != "":
-                Configure.appendPath(Options.LSynthDirectory)
-            else:
-                Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "lsynth"))
-            debugPrint("Use LSynth Parts requested")
+                Configure.appendLocalPath(os.path.join(Options.studLogoDirectory, "8"))
+            Configure.appendLocalPath(Options.studLogoDirectory)
 
         # Search official parts
-        Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "parts"))
         if Options.resolution == "High":
-            Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "p", "48"))
+            Configure.appendOfficialPath(os.path.join(Configure.ldrawInstallDirectory, "p", "48"))
             debugPrint("High-res primitives selected")
         elif Options.resolution == "Low":
-            Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "p", "8"))
+            Configure.appendOfficialPath(os.path.join(Configure.ldrawInstallDirectory, "p", "8"))
             debugPrint("Low-res primitives selected")
         else:
             debugPrint("Standard-res primitives selected")
 
-        Configure.appendPath(os.path.join(Configure.ldrawInstallDirectory, "p"))
+        Configure.appendOfficialPath(os.path.join(Configure.ldrawInstallDirectory, "p"))
+        Configure.appendOfficialPath(os.path.join(Configure.ldrawInstallDirectory, "parts"))
+
+        # Search unofficial parts
+        if Options.useUnofficialParts:
+            if Options.resolution == "High":
+                Configure.appendUnofficialPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "p", "48"))
+            elif Options.resolution == "Low":
+                Configure.appendUnofficialPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "p", "8"))
+            Configure.appendUnofficialPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "p"))
+            Configure.appendUnofficialPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "parts"))
+
+        # Search LSynth parts
+        if Options.useLSynthParts:
+            if Options.LSynthDirectory != "":
+                Configure.appendOfficialPath(Options.LSynthDirectory)
+            elif Options.useUnofficialParts:
+                Configure.appendUnofficialPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "lsynth"))
+            debugPrint("Use LSynth Parts requested")
+
+        # Last resort, try the Tente parts
+        if Options.useUnofficialParts:
+            # Add 'Tente' parts too
+            if Options.resolution == "High":
+                Configure.appendUnofficialPath(os.path.join(Configure.ldrawInstallDirectory, "tente", "p", "48"))
+            elif Options.resolution == "Low":
+                Configure.appendUnofficialPath(os.path.join(Configure.ldrawInstallDirectory, "tente", "p", "8"))
+            Configure.appendUnofficialPath(os.path.join(Configure.ldrawInstallDirectory, "tente", "p"))
+            Configure.appendUnofficialPath(os.path.join(Configure.ldrawInstallDirectory, "tente", "parts"))
 
     def isWindows():
         return platform.system() == "Windows"
@@ -976,7 +990,11 @@ class FileSystem:
         if rootPath is None:
             rootPath = os.path.dirname(filename)
 
-        allSearchPaths = Configure.searchPaths[:]
+        # Gather all paths in the order we want to search
+        allSearchPaths = []
+        allSearchPaths.extend(Configure.localSearchPaths)
+        allSearchPaths.extend(Configure.unofficialSearchPaths)
+        allSearchPaths.extend(Configure.officialSearchPaths)
         if rootPath not in allSearchPaths:
             allSearchPaths.append(rootPath)
 
@@ -1122,7 +1140,7 @@ class LDrawGeometry:
             assert i < numPoints
             assert i >= 0
 
-    def appendGeometry(self, geometry, matrix, isStud, isStudLogo, parentMatrix, cull, invert):
+    def appendGeometry(self, geometry, matrix, isParentAStud, isStud, isStudLogo, parentMatrix, cull, invert):
         combinedMatrix = parentMatrix @ matrix
         isReflected = combinedMatrix.determinant() < 0.0
         reflectStudLogo = isStudLogo and isReflected
@@ -1131,6 +1149,10 @@ class LDrawGeometry:
         if reflectStudLogo:
             fixedMatrix = matrix @ Math.reflectionMatrix
             invert = not invert
+
+        # Move studs minimally upwards a smidge, to allow the instructions look to render the edge where the stud meets the base properly
+        if isParentAStud:
+            fixedMatrix = Math.studMinimalTranslationMatrix @ fixedMatrix
 
         # Append face information
         pointCount = len(self.points)
@@ -1332,7 +1354,7 @@ class LDrawNode:
             # Start with a copy of our file's geometry
             assert len(self.file.geometry.faces) == len(self.file.geometry.faceInfo)
             bakedGeometry = LDrawGeometry()
-            bakedGeometry.appendGeometry(self.file.geometry, Math.identityMatrix, self.file.isStud, self.file.isStudLogo, combinedMatrix, self.bfcCull, self.bfcInverted)
+            bakedGeometry.appendGeometry(self.file.geometry, Math.identityMatrix, False, self.file.isStud, self.file.isStudLogo, combinedMatrix, self.bfcCull, self.bfcInverted)
 
             # Replaces the default colour 16 in our faceColours list with a specific colour
             for faceInfo in bakedGeometry.faceInfo:
@@ -1347,7 +1369,7 @@ class LDrawNode:
 
                     isStud = child.file.isStud
                     isStudLogo = child.file.isStudLogo
-                    bakedGeometry.appendGeometry(bg, child.matrix, isStud, isStudLogo, combinedMatrix, self.bfcCull, self.bfcInverted)
+                    bakedGeometry.appendGeometry(bg, child.matrix, self.file.isStud, isStud, isStudLogo, combinedMatrix, self.bfcCull, self.bfcInverted)
 
             CachedGeometry.addToCache(key, bakedGeometry)
         assert len(bakedGeometry.faces) == len(bakedGeometry.faceInfo)
@@ -1534,6 +1556,7 @@ class LDrawFile:
         name = os.path.basename(filename).lower()
 
         return name in (
+            "stud.dat",
             "stud2.dat",
             "stud6.dat",
             "stud6a.dat",
