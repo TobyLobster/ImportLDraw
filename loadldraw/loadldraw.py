@@ -1474,16 +1474,16 @@ class LDrawFile:
 
             for direct in [directory_to_extract_to, localDir]:
                 if direct:
-                    Configure.appendPath(os.path.join(direct, "CustomParts"))
-                    Configure.appendPath(os.path.join(direct, "CustomParts", "parts"))
+                    Configure.appendUnofficialPath(os.path.join(direct, "CustomParts"))
+                    Configure.appendUnofficialPath(os.path.join(direct, "CustomParts", "parts"))
 
                     if Options.resolution == "High":
-                        Configure.appendPath(os.path.join(direct, "CustomParts", "p", "48"))
+                        Configure.appendUnofficialPath(os.path.join(direct, "CustomParts", "p", "48"))
                     elif Options.resolution == "Low":
-                        Configure.appendPath(os.path.join(direct, "CustomParts", "p", "8"))
-                    Configure.appendPath(os.path.join(direct, "CustomParts", "p"))
-                    Configure.appendPath(os.path.join(direct, "CustomParts", "s"))
-                    Configure.appendPath(os.path.join(direct, "CustomParts", "s", "s"))
+                        Configure.appendUnofficialPath(os.path.join(direct, "CustomParts", "p", "8"))
+                    Configure.appendUnofficialPath(os.path.join(direct, "CustomParts", "p"))
+                    Configure.appendUnofficialPath(os.path.join(direct, "CustomParts", "s"))
+                    Configure.appendUnofficialPath(os.path.join(direct, "CustomParts", "s", "s"))
 
         self.fullFilepath = filepath
 
