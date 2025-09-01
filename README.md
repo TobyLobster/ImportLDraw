@@ -94,7 +94,7 @@ LDraw&trade; is a trademark owned and licensed by the Estate of James Jessiman. 
 
 **Bricksmith** allows you to create virtual instructions for your Lego creations on your Mac.<br clear=left>
 
-<a href="http://lsynth.sourceforge.net"><img align="left" src="./images/logos/LSynthExample.png" alt="LSynth example" style="margin: 0px 10px 0px 0px;"/></a>
+<a href="https://deeice.github.io/lsynth/"><img align="left" src="./images/logos/LSynthExample.png" alt="LSynth example" style="margin: 0px 10px 0px 0px;"/></a>
 
 **LSynth** is a program that synthesizes bendable parts for LDraw files.<br clear=left>
 
