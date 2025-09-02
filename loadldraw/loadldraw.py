@@ -412,14 +412,17 @@ class Configure:
     tempDir = None
 
     def appendLocalPath(path):
+        path = FileSystem.pathInsensitive(path)
         if os.path.exists(path):
             Configure.localSearchPaths.append(path)
 
     def appendOfficialPath(path):
+        path = FileSystem.pathInsensitive(path)
         if os.path.exists(path):
             Configure.officialSearchPaths.append(path)
 
     def appendUnofficialPath(path):
+        path = FileSystem.pathInsensitive(path)
         if os.path.exists(path):
             Configure.unofficialSearchPaths.append(path)
 
