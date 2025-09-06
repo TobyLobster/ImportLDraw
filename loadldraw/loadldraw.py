@@ -4058,8 +4058,8 @@ def setupLineset(lineset, thickness, group):
     # Use square caps
     lineset.linestyle.caps = 'SQUARE'       # Can be 'ROUND', 'BUTT', or 'SQUARE'
 
-    # Draw inside the edge of the object
-    lineset.linestyle.thickness_position = 'INSIDE'
+    # Draw centered on the edge of the object
+    lineset.linestyle.thickness_position = 'CENTER'
 
     # Set Thickness
     lineset.linestyle.thickness = thickness
