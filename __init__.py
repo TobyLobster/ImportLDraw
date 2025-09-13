@@ -17,9 +17,14 @@ Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 """
 
-import bpy
+# Import From Files
+if "bpy" in locals():
+    import importlib
+    importlib.reload(importldraw)
+else:
+    from . import importldraw
 
-from . import importldraw
+import bpy
 
 bl_info = {
     "name": "Import LDraw",
