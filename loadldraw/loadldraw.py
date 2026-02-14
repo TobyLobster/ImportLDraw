@@ -2015,12 +2015,14 @@ class BlenderMaterials:
         return node
 
     def __nodeSeparateHSV(nodes, x, y):
-        node = nodes.new('ShaderNodeSeparateHSV')
+        node = nodes.new('ShaderNodeSeparateColor')
+        node.mode = 'HSV'
         node.location = x, y
         return node
 
     def __nodeCombineHSV(nodes, x, y):
-        node = nodes.new('ShaderNodeCombineHSV')
+        node = nodes.new('ShaderNodeCombineColor')
+        node.mode = 'HSV'
         node.location = x, y
         return node
 
@@ -2981,15 +2983,15 @@ class BlenderMaterials:
                 # link nodes together
                 group.links.new(node_input.outputs['Color'], node_sep_hsv.inputs['Color'])
                 group.links.new(node_input.outputs['Normal'], node_principled.inputs['Normal'])
-                group.links.new(node_sep_hsv.outputs['H'], node_com_hsv.inputs['H'])
-                group.links.new(node_sep_hsv.outputs['S'], node_com_hsv.inputs['S'])
-                group.links.new(node_sep_hsv.outputs['V'], node_multiply.inputs[0])
+                group.links.new(node_sep_hsv.outputs[0], node_com_hsv.inputs[0])
+                group.links.new(node_sep_hsv.outputs[1], node_com_hsv.inputs[1])
+                group.links.new(node_sep_hsv.outputs[2], node_multiply.inputs[0])
                 group.links.new(node_com_hsv.outputs['Color'], node_principled.inputs['Base Color'])
                 group.links.new(node_com_hsv.outputs['Color'], BlenderMaterials.__getSubsurfaceColor(node_principled))
                 group.links.new(node_tex_coord.outputs['Object'], node_tex_wave.inputs['Vector'])
                 group.links.new(node_tex_wave.outputs['Fac'], node_color_ramp.inputs['Fac'])
                 group.links.new(node_color_ramp.outputs['Color'], node_multiply.inputs[1])
-                group.links.new(node_multiply.outputs[0], node_com_hsv.inputs['V'])
+                group.links.new(node_multiply.outputs[0], node_com_hsv.inputs[2])
                 group.links.new(node_principled.outputs['BSDF'], node_output.inputs[0])
             else:
                 node_diffuse = BlenderMaterials.__nodeDiffuse(group.nodes, 0.0, -242, -23)
