@@ -1154,7 +1154,7 @@ class LDrawGeometry:
             invert = not invert
 
         # Move studs minimally upwards a smidge, to allow the instructions look to render the edge where the stud meets the base properly
-        if isParentAStud:
+        if isParentAStud and Options.instructionsLook:
             fixedMatrix = Math.studMinimalTranslationMatrix @ fixedMatrix
 
         # Append face information
@@ -2014,13 +2014,35 @@ class BlenderMaterials:
         node.inputs[2].default_value = v
         return node
 
+    def __isShaderNode(name):
+        if bpy.context.active_object and bpy.context.active_object.active_material:
+            node_tree = bpy.context.active_object.active_material.node_tree
+            for node in node_tree.nodes:
+                if node.name == name:
+                    return(True)
+        return(False)
+
     def __nodeSeparateHSV(nodes, x, y):
-        node = nodes.new('ShaderNodeSeparateHSV')
+        if BlenderMaterials.__isShaderNode('ShaderNodeSeparateHSV'):
+            # Blender 4
+            node = nodes.new('ShaderNodeSeparateHSV')
+        else:
+            # Blender 5
+            node = nodes.new('ShaderNodeSeparateColor')
+            node.mode = 'HSV'
+
         node.location = x, y
         return node
 
     def __nodeCombineHSV(nodes, x, y):
-        node = nodes.new('ShaderNodeCombineHSV')
+        if BlenderMaterials.__isShaderNode('ShaderNodeCombineHSV'):
+            # Blender 4
+            node = nodes.new('ShaderNodeCombineHSV')
+        else:
+            # Blender 5
+            node = nodes.new('ShaderNodeCombineColor')
+            node.mode = 'HSV'
+
         node.location = x, y
         return node
 
@@ -2981,15 +3003,23 @@ class BlenderMaterials:
                 # link nodes together
                 group.links.new(node_input.outputs['Color'], node_sep_hsv.inputs['Color'])
                 group.links.new(node_input.outputs['Normal'], node_principled.inputs['Normal'])
-                group.links.new(node_sep_hsv.outputs['H'], node_com_hsv.inputs['H'])
-                group.links.new(node_sep_hsv.outputs['S'], node_com_hsv.inputs['S'])
-                group.links.new(node_sep_hsv.outputs['V'], node_multiply.inputs[0])
+                if hasattr(node_sep_hsv.outputs, 'H'):
+                    # Before Blender 5
+                    group.links.new(node_sep_hsv.outputs['H'], node_com_hsv.inputs['H'])
+                    group.links.new(node_sep_hsv.outputs['S'], node_com_hsv.inputs['S'])
+                    group.links.new(node_sep_hsv.outputs['V'], node_multiply.inputs[0])
+                    group.links.new(node_multiply.outputs[0], node_com_hsv.inputs['V'])
+                else:
+                    # Blender 5
+                    group.links.new(node_sep_hsv.outputs[0], node_com_hsv.inputs[0])    # Hue
+                    group.links.new(node_sep_hsv.outputs[1], node_com_hsv.inputs[1])    # Saturation
+                    group.links.new(node_sep_hsv.outputs[2], node_multiply.inputs[0])   # Value
+                    group.links.new(node_multiply.outputs[0], node_com_hsv.inputs[2])
                 group.links.new(node_com_hsv.outputs['Color'], node_principled.inputs['Base Color'])
                 group.links.new(node_com_hsv.outputs['Color'], BlenderMaterials.__getSubsurfaceColor(node_principled))
                 group.links.new(node_tex_coord.outputs['Object'], node_tex_wave.inputs['Vector'])
                 group.links.new(node_tex_wave.outputs['Fac'], node_color_ramp.inputs['Fac'])
                 group.links.new(node_color_ramp.outputs['Color'], node_multiply.inputs[1])
-                group.links.new(node_multiply.outputs[0], node_com_hsv.inputs['V'])
                 group.links.new(node_principled.outputs['BSDF'], node_output.inputs[0])
             else:
                 node_diffuse = BlenderMaterials.__nodeDiffuse(group.nodes, 0.0, -242, -23)
@@ -3794,7 +3824,9 @@ def smoothShadingAndFreestyleEdges(ob):
         # Mark all sharp edges as freestyle edges
         me = bpy.context.object.data
         for e in me.edges:
-            e.use_freestyle_mark = e.use_edge_sharp
+            if hasattr(e, 'use_freestyle_mark'):
+                # Before Blender 5
+                e.use_freestyle_mark = e.use_edge_sharp
 
     # Deselect object
     deselectObject(ob)
@@ -4139,25 +4171,32 @@ def setupRealisticLook():
 
         # Create Compositing Nodes
         scene.use_nodes = True
+        if hasattr(bpy.ops.node, "new_compositing_node_group"):
+            # Blender 5
+            node_tree = bpy.data.node_groups.new("Compositor Nodes", "CompositorNodeTree")
+            scene.compositing_node_group = node_tree
+        elif hasattr(scene, "node_tree"):
+            # Before Blender 5
+            node_tree = scene.node_tree
 
         # If scene nodes exist for compositing instructions look, remove them
-        nodeNames = [node.name for node in scene.node_tree.nodes]
+        nodeNames = [node.name for node in node_tree.nodes]
         if "Solid" in nodeNames:
-           scene.node_tree.nodes.remove(scene.node_tree.nodes["Solid"])
+           node_tree.nodes.remove(node_tree.nodes["Solid"])
 
         if "Trans" in nodeNames:
-           scene.node_tree.nodes.remove(scene.node_tree.nodes["Trans"])
+           node_tree.nodes.remove(node_tree.nodes["Trans"])
 
         if "Z Combine" in nodeNames:
-            scene.node_tree.nodes.remove(scene.node_tree.nodes["Z Combine"])
+            node_tree.nodes.remove(node_tree.nodes["Z Combine"])
 
         # Set up standard link from Render Layers to Composite
         if "Render Layers" in nodeNames:
             if "Composite" in nodeNames:
-                rl = scene.node_tree.nodes["Render Layers"]
-                zCombine = scene.node_tree.nodes["Composite"]
+                rl = node_tree.nodes["Render Layers"]
+                zCombine = node_tree.nodes["Composite"]
 
-                links = scene.node_tree.links
+                links = node_tree.links
                 links.new(rl.outputs[0], zCombine.inputs[0])
 
     removeCollection('Black Edged Bricks Collection')
@@ -4185,6 +4224,19 @@ def createCollection(scene, name):
         scene.collection.children.link(bpy.data.collections[name])
 
 # **************************************************************************************
+def ensure_output_color_socket(node_tree, name="Result"):
+    iface = node_tree.interface
+
+    # items_tree holds the sockets/panels as sequence of (name, item) tuples
+    for key, item in iface.items_tree:
+        # item is the socket object for sockets
+        if getattr(item, "name", None) == name and getattr(item, "in_out", None) == 'OUTPUT':
+            return item
+
+    # not found — create and return new socket
+    return iface.new_socket(name=name, in_out='OUTPUT', socket_type='NodeSocketColor')
+
+# **************************************************************************************
 def setupInstructionsLook():
     scene = bpy.context.scene
     render = scene.render
@@ -4205,7 +4257,12 @@ def setupInstructionsLook():
         render.alpha_mode = 'TRANSPARENT'
 
     # Turn on cycles transparency
-    scene.cycles.film_transparent = True
+    if hasattr(scene, 'render') and hasattr(scene.render, 'film_transparent'):
+        # Blender 5
+        scene.render.film_transparent = True
+    elif hasattr(scene.cycles, 'film_transparent'):
+        # Before Blender 5
+        scene.cycles.film_transparent = True
 
     # Increase max number of transparency bounces to at least 80
     # This avoids artefacts when multiple transparent objects are behind each other
@@ -4340,48 +4397,93 @@ def setupInstructionsLook():
 
     # Create Compositing Nodes
     scene.use_nodes = True
+    if hasattr(bpy.ops.node, "new_compositing_node_group"):
+        # Blender 5
+        if "Compositor Nodes" in bpy.data.node_groups:
+            node_tree = bpy.data.node_groups["Compositor Nodes"]
+        else:
+            node_tree = bpy.data.node_groups.new("Compositor Nodes", "CompositorNodeTree")
+        scene.compositing_node_group = node_tree
+    elif hasattr(scene, "node_tree"):
+        # Before Blender 5
+        node_tree = scene.node_tree
 
-    if "Solid" in scene.node_tree.nodes:
-        solidLayer = scene.node_tree.nodes["Solid"]
-    else:
-        solidLayer = scene.node_tree.nodes.new('CompositorNodeRLayers')
-        solidLayer.name = "Solid"
-    solidLayer.layer = 'SolidBricks'
+    if hasattr(node_tree, "nodes"):
+        if "Solid" in node_tree.nodes:
+            solidLayer = node_tree.nodes["Solid"]
+        else:
+            solidLayer = node_tree.nodes.new('CompositorNodeRLayers')
+            solidLayer.name = "Solid"
+        solidLayer.layer = 'SolidBricks'
 
-    if "Trans" in scene.node_tree.nodes:
-        transLayer = scene.node_tree.nodes["Trans"]
-    else:
-        transLayer = scene.node_tree.nodes.new('CompositorNodeRLayers')
-        transLayer.name = "Trans"
-    transLayer.layer = 'TransparentBricks'
+        if "Trans" in node_tree.nodes:
+            transLayer = node_tree.nodes["Trans"]
+        else:
+            transLayer = node_tree.nodes.new('CompositorNodeRLayers')
+            transLayer.name = "Trans"
+        transLayer.layer = 'TransparentBricks'
 
-    if "Z Combine" in scene.node_tree.nodes:
-        zCombine = scene.node_tree.nodes["Z Combine"]
-    else:
-        zCombine = scene.node_tree.nodes.new('CompositorNodeZcombine')
-    zCombine.use_alpha = True
-    zCombine.use_antialias_z = True
+        if "Z Combine" in node_tree.nodes:
+            zCombine = node_tree.nodes["Z Combine"]
+        else:
+            zCombine = node_tree.nodes.new('CompositorNodeZcombine')
 
-    if "Set Alpha" in scene.node_tree.nodes:
-        setAlpha = scene.node_tree.nodes["Set Alpha"]
-    else:
-        setAlpha = scene.node_tree.nodes.new('CompositorNodeSetAlpha')
-    setAlpha.inputs[1].default_value = 0.75
+        if hasattr(zCombine, "use_alpha"):
+            zCombine.use_alpha = True
+        else:
+            zCombine.inputs[4].default_value = True     # Use alpha
 
-    composite = scene.node_tree.nodes["Composite"]
-    composite.location = (950, 400)
-    zCombine.location = (750, 500)
-    transLayer.location = (300, 300)
-    solidLayer.location = (300, 600)
-    setAlpha.location = (580, 370)
+        if hasattr(zCombine, "use_antialias_z"):
+            zCombine.use_antialias_z = True
+        else:
+            zCombine.inputs[4].default_value = True     # Antialias
 
-    links = scene.node_tree.links
-    links.new(solidLayer.outputs[0], zCombine.inputs[0])
-    links.new(solidLayer.outputs[2], zCombine.inputs[1])
-    links.new(transLayer.outputs[0], setAlpha.inputs[0])
-    links.new(setAlpha.outputs[0], zCombine.inputs[2])
-    links.new(transLayer.outputs[2], zCombine.inputs[3])
-    links.new(zCombine.outputs[0], composite.inputs[0])
+        if "Set Alpha" in node_tree.nodes:
+            setAlpha = node_tree.nodes["Set Alpha"]
+        else:
+            setAlpha = node_tree.nodes.new('CompositorNodeSetAlpha')
+        setAlpha.inputs[1].default_value = 0.75
+
+        if "Composite" in node_tree.nodes:
+            # Before Blender 5
+            composite = node_tree.nodes["Composite"]
+            viewer = None
+        else:
+            # Blender 5
+
+            # This is a bit off topic, but in Blender 5 the alpha node value has changed meaning it seems
+            setAlpha.inputs[1].default_value = 1.5
+
+            new_socket = ensure_output_color_socket(node_tree, 'Result')
+
+            # Remove any existing Group Output node(s)
+            for n in tuple(node_tree.nodes):
+                if n.bl_idname == "NodeGroupOutput":
+                    node_tree.nodes.remove(n)
+
+            group_output = node_tree.nodes.new("NodeGroupOutput")
+            composite = group_output
+
+            # Add viewer node
+            viewer = node_tree.nodes.new('CompositorNodeViewer')
+
+        composite.location = (950, 400)
+
+        zCombine.location = (750, 500)
+        transLayer.location = (300, 300)
+        solidLayer.location = (300, 600)
+        setAlpha.location = (580, 400)
+
+        links = node_tree.links
+        links.new(solidLayer.outputs[0], zCombine.inputs[0])
+        links.new(solidLayer.outputs[2], zCombine.inputs[1])
+        links.new(transLayer.outputs[0], setAlpha.inputs[0])
+        links.new(setAlpha.outputs[0], zCombine.inputs[2])
+        links.new(transLayer.outputs[2], zCombine.inputs[3])
+        links.new(zCombine.outputs[0], composite.inputs[0])
+        if viewer:
+            viewer.location = (950, 500)
+            links.new(zCombine.outputs[0], viewer.inputs[0])
 
     # Blender 3 only: link the Z from the Z Combine to the composite. This is not present in Blender 4.
     if bpy.app.version < (4, 0, 0):
