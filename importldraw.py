@@ -168,7 +168,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
     colourScheme: EnumProperty(
         name="Colour scheme options",
         description="Colour scheme options",
-        default=prefs.get("useColurScheme", "lgeo"),
+        default=prefs.get("useColourScheme", "lgeo"),
         items=(
             ("lgeo", "Realistic colours", "Uses the LGEO colour scheme for realistic colours."),
             ("ldraw", "Original LDraw colours", "Uses the standard LDraw colour scheme. Looks good with the Instructions Look."),
