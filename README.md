@@ -22,6 +22,7 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 + Import **photorealistic** look, or **Instructions** look.
 + **Physically Based Realistic materials** - standard brick material, transparent, rubber, chrome, metal, pearlescent, glow-in-the-dark, glitter and speckle.
 + **Principled Shader** - Uses Blender's Principled BSDF shader for an optimal look.
++ **Textures** - printed parts and stickers that use the LDraw texture mapping extension (!TEXMAP: planar, cylindrical and spherical) import with their images. Images are found in the *textures* folders of the parts library, or can be embedded in the model file (!DATA). Embedded images are packed into the .blend file, or optionally saved next to the model. Untick *Import textures* to import the untextured versions instead.
 + **Accurate colour handling**. Correct colour space management is used so that e.g. black parts look black.
 + **Direct colours** supported.
 + **Back face culling** - fully parses all BFC information, for accurate normals.

@@ -46,6 +46,7 @@ import itertools
 import operator
 import zipfile
 import tempfile
+import textwrap
 import base64
 import binascii
 import hashlib
@@ -125,14 +126,26 @@ def getDiffuseColor(color):
 
 # **************************************************************************************
 def ShowMessageBox(message = "", title = "Message Box", icon = 'INFO'):
+    """Shows a message in a popup (wrapped over several lines). Does nothing when there is no window, e.g. in background mode."""
+    if bpy.app.background or bpy.context.window_manager is None or bpy.context.window is None:
+        return
+
+    lines = textwrap.wrap(message, 90) or [""]
+
     def draw(self, context):
-        self.layout.label(text=message)
+        for line in lines:
+            self.layout.label(text=line)
 
-    bpy.context.window_manager.popup_menu(draw, title = title, icon = icon)
+    try:
+        bpy.context.window_manager.popup_menu(draw, title = title, icon = icon)
+    except RuntimeError:
+        pass
 
 
 # **************************************************************************************
 # **************************************************************************************
+MESH_FORMAT_VERSION = 2     # 2 = texture coordinates and print normals (version 1.3.0)
+
 class Options:
     """User Options"""
 
@@ -197,7 +210,10 @@ class Options:
     def meshOptionsString():
         """These options change the mesh, so if they change, a new mesh needs to be cached"""
 
-        return "_".join([str(Options.realScale),
+        # MESH_FORMAT_VERSION changes when the importer starts building meshes differently (e.g. with
+        # texture coordinates), so meshes made by an earlier version of the add-on aren't reused.
+        return "_".join([str(MESH_FORMAT_VERSION),
+                         str(Options.realScale),
                          str(Options.useUnofficialParts),
                          str(Options.instructionsLook),
                          str(Options.resolution),
@@ -226,6 +242,7 @@ class Options:
 # Globals
 globalBrickCount = 0
 globalObjectsToAdd = []         # Blender objects to add to the scene
+globalMissingFiles = []         # Files referenced by the import that could not be found
 globalCamerasToAdd = []         # Camera data to add to the scene
 globalGroupObjects = {}         # LeoCAD group empties created this import, keyed by (parent object, group name)
 globalImportFilepath = ""       # The file being imported (embedded images may be written next to it)
@@ -389,6 +406,9 @@ def printError(message):
     global globalContext
     if globalContext is not None:
         globalContext.report({'ERROR'}, message)
+    else:
+        # Called from a script (no operator to report to), so show it in a popup instead
+        ShowMessageBox(message, "Import LDraw", 'CANCEL')
 
 
 # **************************************************************************************
@@ -1438,14 +1458,14 @@ class TexMap:
                 u = d.dot(self.uAxis) / self.uLengthSquared
                 v = d.dot(self.vAxis) / self.vLengthSquared
                 result.append((u, 1.0 - v))
-            return result
+            return self.__offTheEdge(result)
 
         if self.method == "CYLINDRICAL":
             # U: angle around the axis. V: height up the axis (image top at the top of the cylinder)
             angles = self.__angles(points)
-            return [(0.5 + angle / self.angles[0],
-                     1.0 - self.normal.dot(self.centre - point) / self.height)
-                    for angle, point in zip(angles, points)]
+            return self.__offTheEdge([(0.5 + angle / self.angles[0],
+                                       1.0 - self.normal.dot(self.centre - point) / self.height)
+                                      for angle, point in zip(angles, points)])
 
         # SPHERICAL. U: longitude. V: latitude (image top towards 'normal')
         angles = self.__angles(points)
@@ -1454,7 +1474,25 @@ class TexMap:
             d = point - self.centre
             latitude = math.asin(max(-1.0, min(1.0, d.normalized().dot(self.normal)))) if d.length > 0.0 else 0.0
             result.append((0.5 + angle / self.angles[0], 0.5 + latitude / self.angles[1]))
-        return result
+        return self.__offTheEdge(result)
+
+    def __offTheEdge(self, uvs):
+        """
+        A face lying exactly along an edge of the image (e.g. the end of a brick, when the image
+        stops at that end) has every corner at U = 1, say. Rounding then puts parts of it just
+        inside the image and parts just outside, so it flickers between the image and the part's
+        colour. Move such a face clearly outside the image, so it shows the part's colour.
+        """
+        tolerance = 1e-4
+        outside = 0.01
+        for axis in (0, 1):
+            if axis == 0 and self.wrapU:
+                continue
+            values = [uv[axis] for uv in uvs]
+            for edge, moveTo in ((0.0, -outside), (1.0, 1.0 + outside)):
+                if all(abs(value - edge) <= tolerance for value in values):
+                    uvs = [(moveTo, uv[1]) if axis == 0 else (uv[0], moveTo) for uv in uvs]
+        return uvs
 
 
 # **************************************************************************************
@@ -1836,6 +1874,8 @@ class LDrawFile:
             result = FileSystem.locate(filepath, parentDir)
             if result is None:
                 printWarningOnce("Missing file {0}".format(filepath))
+                if filepath not in globalMissingFiles:
+                    globalMissingFiles.append(filepath)
                 return False
             filepath = result
 
@@ -5377,6 +5417,9 @@ def loadFromFile(context, filename, isFullFilepath=True):
     globalCamerasToAdd = []
     globalContext = context
 
+    global globalMissingFiles
+    globalMissingFiles = []
+
     # Make sure we have the latest configuration, including the latest ldraw directory
     # and the colours derived from that.
     Configure()
@@ -5457,11 +5500,28 @@ def loadFromFile(context, filename, isFullFilepath=True):
     debugPrint("Creating Blender objects")
     rootOb = createBlenderObjectsFromNode(node, node.matrix, name)
 
+    # Say clearly if files were missing, since the result can be incomplete or even empty
+    # (e.g. a part that needs subparts newer than the LDraw library in use)
+    if globalMissingFiles:
+        hasGeometry = any(ob.type == 'MESH' for ob in globalObjectsToAdd)
+        shown = ", ".join(globalMissingFiles[:5]) + (" and {0} more".format(len(globalMissingFiles) - 5) if len(globalMissingFiles) > 5 else "")
+        message = "{0} {1} could not be found in the LDraw library at '{2}': {3}".format(
+            len(globalMissingFiles), "file" if len(globalMissingFiles) == 1 else "files", Configure.ldrawInstallDirectory, shown)
+        if hasGeometry:
+            printWarningOnce(message + ". The import may be incomplete.")
+            if globalContext is None:
+                ShowMessageBox(message + ". The import may be incomplete.", "Import LDraw", 'ERROR')
+        else:
+            printError(message + ". Nothing could be imported; the library may be too old for this file.")
+
     if not node.file.isModel:
         # Fix top level rotation from LDraw coordinate space to Blender coordinate space.
         # We rotate the object rather than its mesh, since the mesh can be shared with other
         # objects (e.g. from a previous import) and must stay in LDraw orientation.
         rootOb.matrix_local = Math.rotationMatrix @ rootOb.matrix_local
+
+        # The points recorded for positioning the camera were in LDraw orientation too
+        globalPoints = [Math.rotationMatrix @ p for p in globalPoints]
 
     scene  = bpy.context.scene
     camera = scene.camera
@@ -5481,8 +5541,8 @@ def loadFromFile(context, filename, isFullFilepath=True):
         else:
             scene.camera.data.type = 'PERSP'
 
-    # Centre object only if root node is a model
-    if node.file.isModel and globalPoints:
+    # Frame the camera and view on what was imported (a model or a single part)
+    if globalPoints:
         # Calculate our bounding box in global coordinate space
         boundingBoxMin = mathutils.Vector((0, 0, 0))
         boundingBoxMax = mathutils.Vector((0, 0, 0))
@@ -5537,6 +5597,19 @@ def loadFromFile(context, filename, isFullFilepath=True):
                             error = iterateCameraPosition(camera, render, vcentre, True)
                             if (error < 0.001):
                                 break
+
+                # Make sure no part of a small model is nearer the camera than the clipping distance.
+                # (An orthographic camera can simply move back, since that doesn't change the picture.
+                # A perspective camera would change the picture, so it clips less instead.)
+                if globalPoints:
+                    forwards = camera.rotation_euler.to_matrix() @ mathutils.Vector((0.0, 0.0, -1.0))
+                    nearest = min((p - camera.location).dot(forwards) for p in globalPoints)
+                    wanted = 2.0 * camera.data.clip_start
+                    if nearest < wanted:
+                        if camera.data.type == 'ORTHO':
+                            camera.location -= forwards * (wanted - nearest)
+                        elif nearest > 0.0:
+                            camera.data.clip_start = 0.5 * nearest
 
         # Find the (first) 3D View, then set the view's 'look at' and 'distance'
         # Note: Not a camera object, but the point of view in the UI.
