@@ -247,6 +247,12 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         default=prefs.get("useTextures", True)
     )
 
+    packEmbeddedImages: BoolProperty(
+        name="Pack embedded images",
+        description="Texture images embedded in the model file are packed into the .blend file. Otherwise they are saved as files next to the model",
+        default=prefs.get("packEmbeddedImages", True)
+    )
+
     useLogoStuds: BoolProperty(
         name="Show 'LEGO' logo on studs",
         description="Shows the LEGO logo on each stud (at the expense of some extra geometry and import time)",
@@ -329,6 +335,9 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         box.prop(self, "useUnofficialParts")
 
         box.prop(self, "useTextures")
+        row = box.row()
+        row.enabled = self.useTextures
+        row.prop(self, "packEmbeddedImages")
         box.prop(self, "useLogoStuds")
         box.prop(self, "instanceStuds")
 
@@ -364,6 +373,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("minifigHierarchy",      self.minifigHierarchy)
         ImportLDrawOps.prefs.set("useUnofficialParts",    self.useUnofficialParts)
         ImportLDrawOps.prefs.set("useTextures",           self.useTextures)
+        ImportLDrawOps.prefs.set("packEmbeddedImages",    self.packEmbeddedImages)
         ImportLDrawOps.prefs.set("useLogoStuds",          self.useLogoStuds)
         ImportLDrawOps.prefs.set("instanceStuds",         self.instanceStuds)
         ImportLDrawOps.prefs.set("resolveNormals",        self.resolveNormals)
@@ -393,6 +403,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.Options.flattenHierarchy           = self.flatten
         loadldraw.Options.minifigHierarchy           = self.minifigHierarchy
         loadldraw.Options.useTextures                = self.useTextures
+        loadldraw.Options.packEmbeddedImages         = self.packEmbeddedImages
         loadldraw.Options.useLogoStuds               = self.useLogoStuds
         loadldraw.Options.logoStudVersion            = "4"
         loadldraw.Options.instanceStuds              = self.instanceStuds

@@ -46,6 +46,9 @@ import itertools
 import operator
 import zipfile
 import tempfile
+import base64
+import binascii
+import hashlib
 
 from pprint import pprint
 
@@ -187,6 +190,8 @@ class Options:
     positionCamera = True               # Position the camera where so we get the whole object in shot
     cameraBorderPercent = 0.05          # Add a border gap around the positioned object (0.05 = 5%) for the rendered image
     useTextures = True                  # Apply !TEXMAP textures (otherwise the untextured FALLBACK geometry is used)
+    packEmbeddedImages = True           # Images embedded in a model ('0 !DATA') are packed into the .blend file (otherwise written next to the model)
+    sharpTextureMaxSize = 64            # Texture images this size or smaller (in pixels, longest side) are drawn pixel sharp rather than smoothed
     instructionsTransparentOpacity = 0.95    # Instructions look: opacity of transparent parts (0 = invisible, 1 = opaque) before the compositor's Set Alpha (0.75)
 
     def meshOptionsString():
@@ -223,6 +228,7 @@ globalBrickCount = 0
 globalObjectsToAdd = []         # Blender objects to add to the scene
 globalCamerasToAdd = []         # Camera data to add to the scene
 globalGroupObjects = {}         # LeoCAD group empties created this import, keyed by (parent object, group name)
+globalImportFilepath = ""       # The file being imported (embedded images may be written next to it)
 globalContext = None
 globalPoints = []
 globalScaleFactor = 0.0004
@@ -1180,6 +1186,58 @@ class CachedGeometry:
 
 # **************************************************************************************
 # **************************************************************************************
+class EmbeddedImages:
+    """
+    Images embedded in LDraw files in '0 !DATA <name>' sections, as base64 in '0 !:' lines.
+    See https://www.ldraw.org/article/47.html
+    An embedded image is used in preference to a file of the same name.
+    """
+
+    __images = {}       # Normalised name -> (bytes, filepath of the file it was embedded in)
+
+    def __normalise(name):
+        return name.strip().replace("\\", "/").lower()
+
+    def addSection(name, lines, sourceFilepath):
+        """Decodes a '0 !DATA' section (including its '0 !DATA' line)"""
+        chunks = []
+        for line in lines:
+            parameters = line.split(None, 2)
+            if len(parameters) >= 2 and parameters[0] == "0" and parameters[1] == "!:":
+                if len(parameters) > 2:
+                    chunks.append(parameters[2])
+        text = "".join("".join(chunks).split())
+        # Accept the URL safe alphabet too, and missing padding
+        text = text.replace("-", "+").replace("_", "/")
+        text += "=" * (-len(text) % 4)
+        try:
+            data = base64.b64decode(text)
+        except (binascii.Error, ValueError):
+            printWarningOnce("Could not decode the embedded image '{0}' in {1}".format(name, sourceFilepath))
+            return
+        if not data:
+            printWarningOnce("The embedded image '{0}' in {1} is empty".format(name, sourceFilepath))
+            return
+
+        # The first one found wins (the importing file is read before the files it uses)
+        EmbeddedImages.__images.setdefault(EmbeddedImages.__normalise(name), (data, sourceFilepath))
+
+    def get(name):
+        """Returns (bytes, sourceFilepath) for an embedded image, or None"""
+        key = EmbeddedImages.__normalise(name)
+        result = EmbeddedImages.__images.get(key)
+        if result is None:
+            if key.startswith("textures/"):
+                result = EmbeddedImages.__images.get(key[len("textures/"):])
+            else:
+                result = EmbeddedImages.__images.get("textures/" + key)
+        return result
+
+    def clearCache():
+        EmbeddedImages.__images = {}
+
+# **************************************************************************************
+# **************************************************************************************
 class FaceInfo:
     def __init__(self, faceColour, culling, windingCCW, isGrainySlopeAllowed, texmap=None, uvs=None):
         self.faceColour = faceColour
@@ -1210,6 +1268,7 @@ class TexMap:
         self.glossmapName = glossmapName            # Parsed but not used yet
         self.declaringFilepath = declaringFilepath
         self.supported = (method in TexMap.__supportedMethods) and (imageName != "")
+        self.localToTex = None          # Matrix from the coordinates the texture is used in to those it was declared in (None = the same)
         self.points = []
         self.angles = []
         if self.supported:
@@ -1254,8 +1313,41 @@ class TexMap:
             printWarningOnce("!TEXMAP {0} is not supported yet (using the fallback geometry)".format(method))
         return TexMap(method, numbers, imageName, glossmapName, declaringFilepath)
 
+    def transformed(self, matrix):
+        """
+        The same texture, for use in the coordinates of a subfile placed with 'matrix'
+        (which maps the subfile's coordinates to our current ones).
+        """
+        result = copy.copy(self)
+        result.localToTex = matrix.copy() if self.localToTex is None else self.localToTex @ matrix
+        return result
+
+    def signature(self):
+        """
+        A short string that is the same for textures that give the same texture coordinates, in
+        the current coordinates. Used to name and cache meshes.
+        """
+        localToTex = self.localToTex if self.localToTex is not None else Math.identityMatrix
+        linear = localToTex.to_3x3().transposed()
+        values = []
+        # PLANAR: u and v are each an affine function of the point, u = a.p + b
+        for axis, lengthSquared in ((self.uAxis, self.uLengthSquared), (self.vAxis, self.vLengthSquared)):
+            a = (linear @ axis) / lengthSquared
+            b = (localToTex.translation - self.points[0]).dot(axis) / lengthSquared
+            values.extend(a)
+            values.append(b)
+        scale = max(abs(v) for v in values) or 1.0
+        text = "|".join([self.method,
+                         self.imageName.lower(),
+                         os.path.dirname(self.declaringFilepath or "").lower(),
+                         "{0:.6g}".format(scale)] +
+                        ["{0:.6f}".format(round(v / scale, 6) + 0.0) for v in values])
+        return hashlib.md5(text.encode("utf-8")).hexdigest()[:8]
+
     def uv(self, point):
         """The (u, v) texture coordinate of a point, with v measured upwards as Blender expects."""
+        if self.localToTex is not None:
+            point = self.localToTex @ point
         d = point - self.points[0]
         u = d.dot(self.uAxis) / self.uLengthSquared
         v = d.dot(self.vAxis) / self.vLengthSquared
@@ -1524,7 +1616,7 @@ class LDrawNode:
         # If this is out of the ordinary, add a code that makes it a unique name to cache the mesh properly
         return "_{0}".format(index)
 
-    def getBlenderGeometry(self, realColourName, basename, parentMatrix=Math.identityMatrix, accumCull=True, accumInvert=False):
+    def getBlenderGeometry(self, realColourName, basename, parentMatrix=Math.identityMatrix, accumCull=True, accumInvert=False, texmap=None):
         """
         Returns the geometry for the Blender Object at this node.
 
@@ -1532,6 +1624,10 @@ class LDrawNode:
         recursively (specifically - those children that are not Blender Object nodes).
 
         The result will become a single mesh in Blender.
+
+        'texmap' is a texture that applies to this node from a file further up (e.g. a
+        texture declared in a model on the line that uses this part), in this node's
+        coordinates. It applies to any geometry that has no texture of its own.
         """
 
         assert self.file is not None
@@ -1541,8 +1637,9 @@ class LDrawNode:
 
         ourColourName = LDrawNode.resolveColour(self.colourName, realColourName)
         code = LDrawNode.getBFCCode(accumCull, accumInvert, self.bfcCull, self.bfcInverted)
-        meshName = "Mesh_{0}_{1}{2}".format(basename, ourColourName, code)
-        key = (self.filename, ourColourName, accumCull, accumInvert, self.bfcCull, self.bfcInverted)
+        textureCode = "_tx" + texmap.signature() if texmap is not None else ""
+        meshName = "Mesh_{0}_{1}{2}{3}".format(basename, ourColourName, code, textureCode)
+        key = (self.filename, ourColourName, accumCull, accumInvert, self.bfcCull, self.bfcInverted, textureCode)
         bakedGeometry = CachedGeometry.getCached(key)
         if bakedGeometry is None:
             combinedMatrix = parentMatrix @ self.matrix
@@ -1550,7 +1647,7 @@ class LDrawNode:
             # Start with a copy of our file's geometry
             assert len(self.file.geometry.faces) == len(self.file.geometry.faceInfo)
             bakedGeometry = LDrawGeometry()
-            bakedGeometry.appendGeometry(self.file.geometry, Math.identityMatrix, False, self.file.isStud, self.file.isStudLogo, combinedMatrix, self.bfcCull, self.bfcInverted)
+            bakedGeometry.appendGeometry(self.file.geometry, Math.identityMatrix, False, self.file.isStud, self.file.isStudLogo, combinedMatrix, self.bfcCull, self.bfcInverted, texmap)
 
             # Replaces the default colour 16 in our faceColours list with a specific colour
             for faceInfo in bakedGeometry.faceInfo:
@@ -1565,7 +1662,8 @@ class LDrawNode:
 
                     isStud = child.file.isStud
                     isStudLogo = child.file.isStudLogo
-                    bakedGeometry.appendGeometry(bg, child.matrix, self.file.isStud, isStud, isStudLogo, combinedMatrix, self.bfcCull, self.bfcInverted, child.texmap)
+                    childTexmap = child.texmap if child.texmap is not None else texmap
+                    bakedGeometry.appendGeometry(bg, child.matrix, self.file.isStud, isStud, isStudLogo, combinedMatrix, self.bfcCull, self.bfcInverted, childTexmap)
 
             CachedGeometry.addToCache(key, bakedGeometry)
         assert len(bakedGeometry.faces) == len(bakedGeometry.faceInfo)
@@ -1690,38 +1788,47 @@ class LDrawFile:
             lines = []
 
         # MPD files have separate sections between '0 FILE' and '0 NOFILE' lines.
-        # Split into sections between "0 FILE" and "0 NOFILE" lines
+        # Split into sections between "0 FILE" and "0 NOFILE" lines.
+        # A '0 !DATA' line starts a section of embedded (base64) data, such as a texture image.
         sections = []
 
         startLine = 0
-        endLine = 0
         lineCount = 0
         sectionFilename = filepath
-        foundEnd = False
+        sectionIsData = False
+        inSection = True
 
         for line in lines:
             parameters = line.strip().split()
-            if len(parameters) > 2:
-                if parameters[0] == "0" and parameters[1] == "FILE":
-                    if foundEnd == False:
-                        endLine = lineCount
-                        if endLine > startLine:
-                            sections.append((sectionFilename, lines[startLine:endLine]))
+            if len(parameters) >= 2 and parameters[0] == "0":
+                isFileLine = (parameters[1] == "FILE") and (len(parameters) > 2)
+                isDataLine = (parameters[1] == "!DATA") and (len(parameters) > 2)
+                if isFileLine or isDataLine:
+                    if inSection and lineCount > startLine:
+                        sections.append((sectionFilename, lines[startLine:lineCount], sectionIsData))
 
                     startLine = lineCount
-                    foundEnd = False
+                    inSection = True
                     sectionFilename = " ".join(parameters[2:])
+                    sectionIsData = isDataLine
 
-                if parameters[0] == "0" and parameters[1] == "NOFILE":
-                    endLine = lineCount
-                    foundEnd = True
-                    sections.append((sectionFilename, lines[startLine:endLine]))
+                elif parameters[1] == "NOFILE":
+                    if inSection:
+                        sections.append((sectionFilename, lines[startLine:lineCount], sectionIsData))
+                    inSection = False
             lineCount += 1
 
-        if foundEnd == False:
-            endLine = lineCount
-            if endLine > startLine:
-                sections.append((sectionFilename, lines[startLine:endLine]))
+        if inSection and lineCount > startLine:
+            sections.append((sectionFilename, lines[startLine:lineCount], sectionIsData))
+
+        # Decode embedded data, keeping the LDraw sections
+        fileSections = []
+        for (sectionFilename, sectionLines, sectionIsData) in sections:
+            if sectionIsData:
+                EmbeddedImages.addSection(sectionFilename, sectionLines, filepath)
+            else:
+                fileSections.append((sectionFilename, sectionLines))
+        sections = fileSections
 
         if len(sections) == 0:
             return False
@@ -2151,7 +2258,7 @@ class BlenderMaterials:
         texture = nodes.new('ShaderNodeTexImage')
         texture.image = image
         texture.extension = 'CLIP'
-        texture.interpolation = 'Linear'
+        texture.interpolation = BlenderMaterials.textureInterpolation(image)
         texture.location = (-560, 300)
 
         mix = nodes.new('ShaderNodeMixRGB')
@@ -2166,6 +2273,85 @@ class BlenderMaterials:
 
     __imageCache = {}
 
+    def textureInterpolation(image):
+        """
+        Small images (pixel art stickers, tiny test images) are drawn pixel sharp. Smoothing them
+        would blur each pixel across a large part of the face. Official prints are all larger than
+        this and stay smoothed.
+        """
+        if image is not None:
+            longestSide = max(image.size[0], image.size[1])
+            if 0 < longestSide <= Options.sharpTextureMaxSize:
+                return 'Closest'
+        return 'Linear'
+
+    def __writeEmbeddedImage(baseName, data):
+        """
+        Writes an embedded image next to the imported file. An existing file with the same name
+        and different contents is never overwritten, a new name is used instead.
+        Returns the filepath, or None if it could not be written.
+        """
+        folder = os.path.dirname(globalImportFilepath) if globalImportFilepath else ""
+        if not folder:
+            return None
+
+        stem, extension = os.path.splitext(baseName)
+        candidate = baseName
+        for attempt in range(1, 100):
+            filepath = os.path.join(folder, candidate)
+            if not os.path.exists(filepath):
+                try:
+                    with open(filepath, "wb") as file:
+                        file.write(data)
+                except OSError as e:
+                    printWarningOnce("Could not write the embedded image {0} ({1}), packing it instead".format(filepath, e))
+                    return None
+                debugPrint("Wrote embedded image {0}".format(filepath))
+                return filepath
+
+            # Already there? (e.g. from an earlier import)
+            try:
+                with open(filepath, "rb") as file:
+                    if file.read() == data:
+                        return filepath
+            except OSError:
+                pass
+            candidate = "{0}_{1}{2}".format(stem, attempt, extension)
+        return None
+
+    def __embeddedImage(name, data, sourceFilepath):
+        """Creates (or reuses) a Blender image for an image embedded in a '0 !DATA' section"""
+        digest = hashlib.sha1(data).hexdigest()
+        baseName = os.path.basename(name.strip().replace("\\", "/")) or "embedded.png"
+        pack = Options.packEmbeddedImages
+
+        # Reuse the image from an earlier import of the same data
+        for image in bpy.data.images:
+            if image.get("LDraw.embeddedHash") == digest:
+                if pack and image.packed_file is not None:
+                    return image
+                if not pack and image.packed_file is None and os.path.isfile(bpy.path.abspath(image.filepath)):
+                    return image
+
+        image = None
+        if not pack:
+            filepath = BlenderMaterials.__writeEmbeddedImage(baseName, data)
+            if filepath is not None:
+                try:
+                    image = bpy.data.images.load(filepath, check_existing=True)
+                except RuntimeError:
+                    image = None
+
+        if image is None:
+            # Pack the image data into the .blend file. If unpacked, it goes in a 'textures' folder.
+            image = bpy.data.images.new(baseName, 1, 1)
+            image.source = 'FILE'
+            image.filepath_raw = "//textures/" + baseName
+            image.pack(data=data, data_len=len(data))
+
+        image["LDraw.embeddedHash"] = digest
+        return image
+
     def getTextureImage(texmap):
         """Finds and loads the image for a texture. Returns None (with a warning) if it can't be found."""
         rootPath = os.path.dirname(texmap.declaringFilepath) if texmap.declaringFilepath else None
@@ -2173,9 +2359,19 @@ class BlenderMaterials:
         if key in BlenderMaterials.__imageCache:
             return BlenderMaterials.__imageCache[key]
 
-        # The spec says: look for 'textures/<name>' along the search path first, then '<name>'
         image = None
-        for candidate in ("textures/" + texmap.imageName, texmap.imageName):
+
+        # An image embedded in the file ('0 !DATA') comes first
+        embedded = EmbeddedImages.get(texmap.imageName)
+        if embedded is not None:
+            try:
+                image = BlenderMaterials.__embeddedImage(texmap.imageName, embedded[0], embedded[1])
+            except RuntimeError as e:
+                printWarningOnce("Could not load the embedded image '{0}' ({1})".format(texmap.imageName, e))
+                image = None
+
+        # The spec says: look for 'textures/<name>' along the search path first, then '<name>'
+        for candidate in (("textures/" + texmap.imageName, texmap.imageName) if image is None else ()):
             filepath = FileSystem.locate(candidate, rootPath)
             if filepath is not None and os.path.isfile(filepath):
                 try:
@@ -2635,7 +2831,7 @@ class BlenderMaterials:
         if texmap is not None:
             image = BlenderMaterials.getTextureImage(texmap)
             if image is not None:
-                colourName = colourName + "_tex_" + os.path.splitext(os.path.basename(image.filepath))[0]
+                colourName = colourName + "_tex_" + os.path.splitext(image.name)[0]
 
         # If it's already in the cache, use that
         if (colourName in BlenderMaterials.__material_list):
@@ -4158,10 +4354,12 @@ def createBlenderObjectsFromNode(node,
                                  realColourName=None,
                                  blenderParentTransform=Math.identityMatrix,
                                  localToWorldSpaceMatrix=Math.identityMatrix,
-                                 blenderNodeParent=None):
+                                 blenderNodeParent=None,
+                                 texmap=None):
     """
     Creates a Blender Object for the node given and (recursively) for all it's children as required.
     Creates and optimises the mesh for each object too.
+    'texmap' is a texture from further up the hierarchy that applies to this node, in the node's coordinates.
     """
 
     global globalBrickCount
@@ -4174,7 +4372,7 @@ def createBlenderObjectsFromNode(node,
 
     if node.isBlenderObjectNode():
         ourColourName = LDrawNode.resolveColour(node.colourName, realColourName)
-        meshName, geometry = node.getBlenderGeometry(ourColourName, name)
+        meshName, geometry = node.getBlenderGeometry(ourColourName, name, texmap=texmap)
         mesh, newMeshCreated = createMesh(name, meshName, geometry)
 
         # Format a name for the Blender Object
@@ -4333,7 +4531,13 @@ def createBlenderObjectsFromNode(node,
     for childNode in node.file.childNodes:
         # Create sub-objects recursively
         childColourName = LDrawNode.resolveColour(childNode.colourName, realColourName)
-        createBlenderObjectsFromNode(childNode, childNode.matrix, childNode.filename, childColourName, blenderParentTransform, localToWorldSpaceMatrix @ localMatrix, blenderNodeParent)
+
+        # A texture on the line that uses the child, or else one that applies to us, applies to the child
+        childTexmap = childNode.texmap if childNode.texmap is not None else texmap
+        if childTexmap is not None:
+            childTexmap = childTexmap.transformed(childNode.matrix)
+
+        createBlenderObjectsFromNode(childNode, childNode.matrix, childNode.filename, childColourName, blenderParentTransform, localToWorldSpaceMatrix @ localMatrix, blenderNodeParent, childTexmap)
 
     return ob
 
@@ -4949,6 +5153,7 @@ def loadFromFile(context, filename, isFullFilepath=True):
     CachedDirectoryFilenames.clearCache()
     CachedFiles.clearCache()
     CachedGeometry.clearCache()
+    EmbeddedImages.clearCache()
     BlenderMaterials.clearCache()
     Configure.warningSuppression = {}
 
@@ -4970,6 +5175,9 @@ def loadFromFile(context, filename, isFullFilepath=True):
     # Load and parse file to create geometry
     filename = os.path.expanduser(filename)
 
+    global globalImportFilepath
+    globalImportFilepath = os.path.abspath(filename) if isFullFilepath else ""
+
     debugPrint("Loading files")
     node = LDrawNode(filename, isFullFilepath, os.path.dirname(filename))
     node.load()
@@ -4982,6 +5190,9 @@ def loadFromFile(context, filename, isFullFilepath=True):
 
         for childNode in node.file.childNodes:
             childNode.matrix = Math.rotationMatrix @ childNode.matrix
+            # A texture on the child's line is in the model's (unrotated) coordinates
+            if childNode.texmap is not None:
+                childNode.texmap = childNode.texmap.transformed(Math.rotationMatrix.inverted())
 
     # Switch to Object mode and deselect all
     if bpy.ops.object.mode_set.poll():
