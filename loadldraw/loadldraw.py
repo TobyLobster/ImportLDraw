@@ -75,11 +75,8 @@ def linkToScene(ob):
 # **************************************************************************************
 def linkToCollection(collectionName, ob):
     # Add object to the appropriate collection
-    if hasCollections:
-        if bpy.data.collections[collectionName].objects.find(ob.name) < 0:
-            bpy.data.collections[collectionName].objects.link(ob)
-    else:
-        bpy.data.groups[collectionName].objects.link(ob)
+    if bpy.data.collections[collectionName].objects.find(ob.name) < 0:
+        bpy.data.collections[collectionName].objects.link(ob)
 
 # **************************************************************************************
 def unlinkFromScene(ob):
@@ -189,6 +186,7 @@ class Options:
     removeDefaultObjects = True         # Remove cube and lamp
     positionCamera = True               # Position the camera where so we get the whole object in shot
     cameraBorderPercent = 0.05          # Add a border gap around the positioned object (0.05 = 5%) for the rendered image
+    useTextures = True                  # Apply !TEXMAP textures (otherwise the untextured FALLBACK geometry is used)
     instructionsTransparentOpacity = 0.95    # Instructions look: opacity of transparent parts (0 = invisible, 1 = opaque) before the compositor's Set Alpha (0.75)
 
     def meshOptionsString():
@@ -216,6 +214,7 @@ class Options:
                          str(Options.studLogoDirectory),
                          str(Options.resolveAmbiguousNormals),
                          str(Options.addBevelModifier),
+                         str(Options.useTextures),
                          str(Options.bevelWidth)])
 
 # **************************************************************************************
@@ -229,7 +228,6 @@ globalPoints = []
 globalScaleFactor = 0.0004
 globalWeldDistance = 0.0005
 
-hasCollections = None
 lightName = "Light"
 
 # **************************************************************************************
@@ -1183,11 +1181,89 @@ class CachedGeometry:
 # **************************************************************************************
 # **************************************************************************************
 class FaceInfo:
-    def __init__(self, faceColour, culling, windingCCW, isGrainySlopeAllowed):
+    def __init__(self, faceColour, culling, windingCCW, isGrainySlopeAllowed, texmap=None, uvs=None):
         self.faceColour = faceColour
         self.culling = culling
         self.windingCCW = windingCCW
         self.isGrainySlopeAllowed = isGrainySlopeAllowed
+        self.texmap = texmap            # TexMap applied to this face, or None
+        self.uvs = uvs                  # One (u, v) per corner of the face when textured
+
+
+# **************************************************************************************
+# **************************************************************************************
+class TexMap:
+    """
+    A texture mapping, from a '0 !TEXMAP START' or '0 !TEXMAP NEXT' line.
+    See https://www.ldraw.org/texmap-spec.html
+
+    The points are in the coordinates of the file that declares the texture (scaled
+    to Blender units, like the geometry).
+    """
+
+    __parameterCounts = {"PLANAR": 9, "CYLINDRICAL": 10, "SPHERICAL": 11}
+    __supportedMethods = ("PLANAR",)
+
+    def __init__(self, method, numbers, imageName, glossmapName, declaringFilepath):
+        self.method = method
+        self.imageName = imageName
+        self.glossmapName = glossmapName            # Parsed but not used yet
+        self.declaringFilepath = declaringFilepath
+        self.supported = (method in TexMap.__supportedMethods) and (imageName != "")
+        self.points = []
+        self.angles = []
+        if self.supported:
+            self.points = [Math.scaleMatrix @ mathutils.Vector(numbers[i:i + 3]) for i in (0, 3, 6)]
+            self.angles = numbers[9:]
+            p1, p2, p3 = self.points
+            self.uAxis = p2 - p1
+            self.vAxis = p3 - p1
+            self.uLengthSquared = self.uAxis.length_squared
+            self.vLengthSquared = self.vAxis.length_squared
+            if self.uLengthSquared == 0.0 or self.vLengthSquared == 0.0:
+                self.supported = False
+
+    def parse(parameters, declaringFilepath):
+        """Parses the parameters that follow 'START' or 'NEXT'. Always returns a TexMap (check 'supported')."""
+        parameters = [p for p in parameters if p != ""]
+        if not parameters:
+            return TexMap("", [], "", "", declaringFilepath)
+
+        method = parameters[0].upper()
+        count = TexMap.__parameterCounts.get(method)
+        if count is None or len(parameters) < 2 + count:
+            printWarningOnce("Unknown !TEXMAP method '{0}' in {1}".format(method, declaringFilepath))
+            return TexMap(method, [], "", "", declaringFilepath)
+
+        try:
+            numbers = [float(x) for x in parameters[1:1 + count]]
+        except ValueError:
+            printWarningOnce("Bad !TEXMAP parameters in {0}".format(declaringFilepath))
+            return TexMap(method, [], "", "", declaringFilepath)
+
+        # The image name may contain spaces; an optional 'GLOSSMAP <name>' follows it
+        rest = parameters[1 + count:]
+        glossmapName = ""
+        if "GLOSSMAP" in rest:
+            index = rest.index("GLOSSMAP")
+            glossmapName = " ".join(rest[index + 1:])
+            rest = rest[:index]
+        imageName = " ".join(rest)
+
+        if method not in TexMap.__supportedMethods:
+            printWarningOnce("!TEXMAP {0} is not supported yet (using the fallback geometry)".format(method))
+        return TexMap(method, numbers, imageName, glossmapName, declaringFilepath)
+
+    def uv(self, point):
+        """The (u, v) texture coordinate of a point, with v measured upwards as Blender expects."""
+        d = point - self.points[0]
+        u = d.dot(self.uAxis) / self.uLengthSquared
+        v = d.dot(self.vAxis) / self.vLengthSquared
+        # LDraw's v runs down the image from its top edge; Blender's runs up from the bottom
+        return (u, 1.0 - v)
+
+    def uvs(self, points):
+        return [self.uv(p) for p in points]
 
 
 # **************************************************************************************
@@ -1201,7 +1277,7 @@ class LDrawGeometry:
         self.faceInfo = []
         self.edges = []
 
-    def parseFace(self, parameters, cull, ccw, isGrainySlopeAllowed):
+    def parseFace(self, parameters, cull, ccw, isGrainySlopeAllowed, texmap=None):
         """Parse a face from parameters"""
 
         num_points = int(parameters[0])
@@ -1228,7 +1304,8 @@ class LDrawGeometry:
         newFace = list(range(pointCount, pointCount + num_points))
         self.points.extend(newPoints)
         self.faces.append(newFace)
-        self.faceInfo.append(FaceInfo(colourName, cull, ccw, isGrainySlopeAllowed))
+        uvs = texmap.uvs(newPoints) if texmap is not None else None
+        self.faceInfo.append(FaceInfo(colourName, cull, ccw, isGrainySlopeAllowed, texmap, uvs))
 
     def parseEdge(self, parameters):
         """Parse an edge from parameters"""
@@ -1248,7 +1325,7 @@ class LDrawGeometry:
             assert i < numPoints
             assert i >= 0
 
-    def appendGeometry(self, geometry, matrix, isParentAStud, isStud, isStudLogo, parentMatrix, cull, invert):
+    def appendGeometry(self, geometry, matrix, isParentAStud, isStud, isStudLogo, parentMatrix, cull, invert, texmap=None):
         combinedMatrix = parentMatrix @ matrix
         isReflected = combinedMatrix.determinant() < 0.0
         reflectStudLogo = isStudLogo and isReflected
@@ -1280,6 +1357,15 @@ class LDrawGeometry:
             faceCCW = faceInfo.windingCCW != invert
             faceCull = faceInfo.culling and cull
 
+            # Textures: a texture declared deeper down (already on the face) wins. Otherwise a texture
+            # active on the type 1 line that included this geometry applies. Its points are in this
+            # (the including file's) coordinates, which is what newPoints are in.
+            faceTexmap = faceInfo.texmap
+            faceUVs = faceInfo.uvs
+            if faceTexmap is None and texmap is not None:
+                faceTexmap = texmap
+                faceUVs = texmap.uvs(newPoints)
+
             # If we are going to resolve ambiguous normals by "best guess" we will let
             # Blender calculate that for us later. Just cull with arbitrary winding for now.
             if not faceCull:
@@ -1290,7 +1376,7 @@ class LDrawGeometry:
                 self.points.extend(newPoints)
                 self.faces.append(newFace)
 
-                newFaceInfo.append(FaceInfo(faceInfo.faceColour, True, True, not isStud and faceInfo.isGrainySlopeAllowed))
+                newFaceInfo.append(FaceInfo(faceInfo.faceColour, True, True, not isStud and faceInfo.isGrainySlopeAllowed, faceTexmap, faceUVs))
                 self.verify(newFace, len(self.points))
 
             if not faceCull:
@@ -1303,7 +1389,8 @@ class LDrawGeometry:
                 self.points.extend(newPoints[::-1])
                 self.faces.append(newFace)
 
-                newFaceInfo.append(FaceInfo(faceInfo.faceColour, True, True, not isStud and faceInfo.isGrainySlopeAllowed))
+                reversedUVs = faceUVs[::-1] if faceUVs is not None else None
+                newFaceInfo.append(FaceInfo(faceInfo.faceColour, True, True, not isStud and faceInfo.isGrainySlopeAllowed, faceTexmap, reversedUVs))
                 self.verify(newFace, len(self.points))
 
         self.faceInfo.extend(newFaceInfo)
@@ -1336,6 +1423,7 @@ class LDrawNode:
         self.isSubPart      = isSubPart
         self.isRootNode     = isRootNode
         self.groupNames     = groupNames.copy()
+        self.texmap         = None      # Texture active on the type 1 line that references this node
 
     def look_at(obj_camera, target, up_vector):
         bpy.context.view_layer.update()
@@ -1477,7 +1565,7 @@ class LDrawNode:
 
                     isStud = child.file.isStud
                     isStudLogo = child.file.isStudLogo
-                    bakedGeometry.appendGeometry(bg, child.matrix, self.file.isStud, isStud, isStudLogo, combinedMatrix, self.bfcCull, self.bfcInverted)
+                    bakedGeometry.appendGeometry(bg, child.matrix, self.file.isStud, isStud, isStudLogo, combinedMatrix, self.bfcCull, self.bfcInverted, child.texmap)
 
             CachedGeometry.addToCache(key, bakedGeometry)
         assert len(bakedGeometry.faces) == len(bakedGeometry.faceInfo)
@@ -1764,6 +1852,10 @@ class LDrawFile:
 
         currentGroupNames = []
 
+        # Texture mapping state (!TEXMAP). Each stack entry is [TexMap, inFallback].
+        textureStack = []
+        nextTexture = None
+
         #debugPrint("Processing file {0}, isSubPart = {1}, found {2} lines".format(self.filename, self.isSubPart, len(self.lines)))
 
         for line in self.lines:
@@ -1772,6 +1864,48 @@ class LDrawFile:
             # Skip empty lines
             if len(parameters) == 0:
                 continue
+
+            # Handle texture mapping commands (when textures are off, these are all ignored as comments,
+            # and the FALLBACK geometry is used)
+            if Options.useTextures and parameters[0] == "0" and len(parameters) > 1:
+                if parameters[1] == "!TEXMAP" and len(parameters) > 2:
+                    command = parameters[2].upper()
+                    if command == "START":
+                        textureStack.append([TexMap.parse(parameters[3:], self.fullFilepath), False])
+                    elif command == "NEXT":
+                        nextTexture = TexMap.parse(parameters[3:], self.fullFilepath)
+                    elif command == "FALLBACK":
+                        if textureStack:
+                            textureStack[-1][1] = True
+                    elif command == "END":
+                        if textureStack:
+                            textureStack.pop()
+                    continue
+
+                # Inside the FALLBACK section of a texture we support, skip the fallback geometry
+                if any(entry[1] and entry[0].supported for entry in textureStack):
+                    continue
+
+                if parameters[1] == "!:":
+                    # Geometry only for programs that support textures. Use it if the texture is supported.
+                    activeTexture = nextTexture or (textureStack[-1][0] if textureStack else None)
+                    if activeTexture is None or not activeTexture.supported:
+                        continue
+                    parameters = parameters[2:]
+                    if len(parameters) == 0:
+                        continue
+            elif Options.useTextures and any(entry[1] and entry[0].supported for entry in textureStack):
+                # Inside the FALLBACK section of a texture we support, skip the fallback geometry
+                continue
+
+            # The texture that applies to this line (if any)
+            currentTexture = None
+            if Options.useTextures and parameters[0] in ("1", "3", "4"):
+                candidate = nextTexture or (textureStack[-1][0] if textureStack else None)
+                if candidate is not None and candidate.supported:
+                    currentTexture = candidate
+            if parameters[0] in ("1", "2", "3", "4", "5"):
+                nextTexture = None
 
             # Pad with empty values to simplify parsing code
             while len(parameters) < 9:
@@ -1884,6 +2018,7 @@ class LDrawFile:
 
                     if new_filename != "":
                         newNode = LDrawNode(new_filename, False, self.fullFilepath, new_colourName, localMatrix, canCullChildNode, bfcInvertNext, processingLSynthParts, not self.isModel, False, currentGroupNames)
+                        newNode.texmap = currentTexture
                         self.childNodes.append(newNode)
                     else:
                         printWarningOnce("In file '{0}', the line '{1}' is not formatted corectly (ignoring).".format(self.fullFilepath, line))
@@ -1901,7 +2036,7 @@ class LDrawFile:
                         self.isDoubleSided = True
 
                     assert len(self.geometry.faces) == len(self.geometry.faceInfo)
-                    self.geometry.parseFace(parameters, self.bfcCertified and bfcLocalCull, bfcWindingCCW, isGrainySlopeAllowed)
+                    self.geometry.parseFace(parameters, self.bfcCertified and bfcLocalCull, bfcWindingCCW, isGrainySlopeAllowed, currentTexture)
                     assert len(self.geometry.faces) == len(self.geometry.faceInfo)
 
                 bfcInvertNext = False
@@ -1915,17 +2050,13 @@ class BlenderMaterials:
     """Creates and stores a cache of materials for Blender"""
 
     __material_list = {}
-    if bpy.app.version >= (4, 0, 0):
-        __hasPrincipledShader = True
-    else:
-        __hasPrincipledShader = "ShaderNodeBsdfPrincipled" in [node.nodetype for node in getattr(bpy.types, "NODE_MT_category_SH_NEW_SHADER").category.items(None)]
 
     def __getGroupName(name):
         if Options.instructionsLook:
             return name + " Instructions"
         return name
 
-    def __createNodeBasedMaterial(blenderName, col, isSlopeMaterial=False):
+    def __createNodeBasedMaterial(blenderName, col, isSlopeMaterial=False, image=None):
         """Set Cycles Material Values."""
 
         # Reuse current material if it exists, otherwise create a new material
@@ -1987,6 +2118,9 @@ class BlenderMaterials:
             elif Options.curvedWalls and not Options.instructionsLook:
                 BlenderMaterials.__createCyclesConcaveWalls(nodes, links, 20 * globalScaleFactor)
 
+            if image is not None:
+                BlenderMaterials.__addTexture(nodes, links, image, colour)
+
             BlenderMaterials.__linkUnconnectedNormals(nodes, links)
 
             material["Lego.isTransparent"] = isTransparent
@@ -1995,6 +2129,66 @@ class BlenderMaterials:
         BlenderMaterials.__createCyclesBasic(nodes, links, (1.0, 1.0, 0.0, 1.0), 1.0, "")
         material["Lego.isTransparent"] = False
         return material
+
+    def __addTexture(nodes, links, image, colour):
+        """
+        Composites a texture image over the part colour: the image's alpha mixes between the
+        colour and the image, and the result feeds the 'Color' input of the material's main
+        node group. Outside the image (UVs beyond 0 to 1) the part colour shows.
+        """
+        main = None
+        for node in nodes:
+            if node.type == 'GROUP' and 'Color' in node.inputs and not node.inputs['Color'].is_linked:
+                main = node
+                break
+        if main is None:
+            return
+
+        uvMap = nodes.new('ShaderNodeUVMap')
+        uvMap.uv_map = "UVMap"
+        uvMap.location = (-760, 300)
+
+        texture = nodes.new('ShaderNodeTexImage')
+        texture.image = image
+        texture.extension = 'CLIP'
+        texture.interpolation = 'Linear'
+        texture.location = (-560, 300)
+
+        mix = nodes.new('ShaderNodeMixRGB')
+        mix.blend_type = 'MIX'
+        mix.inputs['Color1'].default_value = colour
+        mix.location = (-260, 300)
+
+        links.new(uvMap.outputs['UV'], texture.inputs['Vector'])
+        links.new(texture.outputs['Alpha'], mix.inputs['Fac'])
+        links.new(texture.outputs['Color'], mix.inputs['Color2'])
+        links.new(mix.outputs['Color'], main.inputs['Color'])
+
+    __imageCache = {}
+
+    def getTextureImage(texmap):
+        """Finds and loads the image for a texture. Returns None (with a warning) if it can't be found."""
+        rootPath = os.path.dirname(texmap.declaringFilepath) if texmap.declaringFilepath else None
+        key = (texmap.imageName.lower(), rootPath)
+        if key in BlenderMaterials.__imageCache:
+            return BlenderMaterials.__imageCache[key]
+
+        # The spec says: look for 'textures/<name>' along the search path first, then '<name>'
+        image = None
+        for candidate in ("textures/" + texmap.imageName, texmap.imageName):
+            filepath = FileSystem.locate(candidate, rootPath)
+            if filepath is not None and os.path.isfile(filepath):
+                try:
+                    image = bpy.data.images.load(filepath, check_existing=True)
+                except RuntimeError:
+                    image = None
+                if image is not None:
+                    break
+
+        if image is None:
+            printWarningOnce("Could not find texture image '{0}'".format(texmap.imageName))
+        BlenderMaterials.__imageCache[key] = image
+        return image
 
     def __linkUnconnectedNormals(nodes, links):
         """
@@ -2139,18 +2333,10 @@ class BlenderMaterials:
         node = nodes.new('ShaderNodeBsdfPrincipled')
         node.location = x, y
 
-        # Some inputs are renamed in Blender 4
-        if bpy.app.version >= (4, 0, 0):
-            node.inputs['Subsurface Weight'].default_value = subsurface
-            node.inputs['Coat Weight'].default_value = clearcoat
-            node.inputs['Coat Roughness'].default_value = clearcoat_roughness
-            node.inputs['Transmission Weight'].default_value = transmission
-        else:
-            # Blender 3.X or earlier
-            node.inputs['Subsurface'].default_value = subsurface
-            node.inputs['Clearcoat'].default_value = clearcoat
-            node.inputs['Clearcoat Roughness'].default_value = clearcoat_roughness
-            node.inputs['Transmission'].default_value = transmission
+        node.inputs['Subsurface Weight'].default_value = subsurface
+        node.inputs['Coat Weight'].default_value = clearcoat
+        node.inputs['Coat Roughness'].default_value = clearcoat_roughness
+        node.inputs['Transmission Weight'].default_value = transmission
 
         node.inputs['Subsurface Radius'].default_value = mathutils.Vector( (sub_rad, sub_rad, sub_rad) )
         node.inputs['Metallic'].default_value = metallic
@@ -2166,35 +2352,15 @@ class BlenderMaterials:
         node.inputs[2].default_value = v
         return node
 
-    def __isShaderNode(name):
-        if bpy.context.active_object and bpy.context.active_object.active_material:
-            node_tree = bpy.context.active_object.active_material.node_tree
-            for node in node_tree.nodes:
-                if node.name == name:
-                    return(True)
-        return(False)
-
     def __nodeSeparateHSV(nodes, x, y):
-        if BlenderMaterials.__isShaderNode('ShaderNodeSeparateHSV'):
-            # Blender 4
-            node = nodes.new('ShaderNodeSeparateHSV')
-        else:
-            # Blender 5
-            node = nodes.new('ShaderNodeSeparateColor')
-            node.mode = 'HSV'
-
+        node = nodes.new('ShaderNodeSeparateColor')
+        node.mode = 'HSV'
         node.location = x, y
         return node
 
     def __nodeCombineHSV(nodes, x, y):
-        if BlenderMaterials.__isShaderNode('ShaderNodeCombineHSV'):
-            # Blender 4
-            node = nodes.new('ShaderNodeCombineHSV')
-        else:
-            # Blender 5
-            node = nodes.new('ShaderNodeCombineColor')
-            node.mode = 'HSV'
-
+        node = nodes.new('ShaderNodeCombineColor')
+        node.mode = 'HSV'
         node.location = x, y
         return node
 
@@ -2459,10 +2625,17 @@ class BlenderMaterials:
         }
 
     # **********************************************************************************
-    def getMaterial(colourName, isSlopeMaterial):
+    def getMaterial(colourName, isSlopeMaterial, texmap=None):
         pureColourName = colourName
         if isSlopeMaterial:
             colourName = colourName + "_s"
+
+        # A textured face gets its own material, named after the image
+        image = None
+        if texmap is not None:
+            image = BlenderMaterials.getTextureImage(texmap)
+            if image is not None:
+                colourName = colourName + "_tex_" + os.path.splitext(os.path.basename(image.filepath))[0]
 
         # If it's already in the cache, use that
         if (colourName in BlenderMaterials.__material_list):
@@ -2488,7 +2661,7 @@ class BlenderMaterials:
 
         # Create new material
         col = BlenderMaterials.__getColourData(pureColourName)
-        material = BlenderMaterials.__createNodeBasedMaterial(blenderName, col, isSlopeMaterial)
+        material = BlenderMaterials.__createNodeBasedMaterial(blenderName, col, isSlopeMaterial, image)
 
         if material is None:
             printWarningOnce("Could not create material for blenderName {0}".format(blenderName))
@@ -2500,44 +2673,29 @@ class BlenderMaterials:
     # **********************************************************************************
     def clearCache():
         BlenderMaterials.__material_list = {}
+        BlenderMaterials.__imageCache = {}
 
     # **********************************************************************************
     def addInputSocket(group, my_socket_type, myname):
-        if bpy.app.version >= (4, 0, 0):
-            if my_socket_type.endswith("FloatFactor"):
-                my_socket_type = my_socket_type[:-6]
-            elif my_socket_type.endswith("VectorDirection"):
-                my_socket_type = my_socket_type[:-9]
-            group.interface.new_socket(name=myname, in_out="INPUT", socket_type=my_socket_type)
-        else:
-            if my_socket_type.endswith("Vector"):
-                my_socket_type += "Direction"
-            group.inputs.new(my_socket_type, myname)
+        if my_socket_type.endswith("FloatFactor"):
+            my_socket_type = my_socket_type[:-6]
+        elif my_socket_type.endswith("VectorDirection"):
+            my_socket_type = my_socket_type[:-9]
+        group.interface.new_socket(name=myname, in_out="INPUT", socket_type=my_socket_type)
 
     # **********************************************************************************
     def addOutputSocket(group, my_socket_type, myname):
-        if bpy.app.version >= (4, 0, 0):
-            if my_socket_type.endswith("FloatFactor"):
-                my_socket_type = my_socket_type[:-6]
-            elif my_socket_type.endswith("VectorDirection"):
-                my_socket_type = my_socket_type[:-9]
-            group.interface.new_socket(name=myname, in_out="OUTPUT", socket_type=my_socket_type)
-        else:
-            if my_socket_type.endswith("Vector"):
-                my_socket_type += "Direction"
-            group.outputs.new(my_socket_type, myname)
+        if my_socket_type.endswith("FloatFactor"):
+            my_socket_type = my_socket_type[:-6]
+        elif my_socket_type.endswith("VectorDirection"):
+            my_socket_type = my_socket_type[:-9]
+        group.interface.new_socket(name=myname, in_out="OUTPUT", socket_type=my_socket_type)
 
     # **********************************************************************************
     def setDefaults(group, name, default_value, min_value, max_value):
-        if bpy.app.version >= (4, 0, 0):
-            group_inputs = group.nodes["Group Input"].outputs
-            group_inputs[name].default_value = default_value
-            # TODO: How to set min_value and max_value?
-        else:
-            group_inputs = group.inputs
-            group_inputs[name].default_value = default_value
-            group_inputs[name].min_value = min_value
-            group_inputs[name].max_value = max_value
+        group_inputs = group.nodes["Group Input"].outputs
+        group_inputs[name].default_value = default_value
+        # TODO: How to set min_value and max_value?
 
     # **********************************************************************************
     def __createGroup(name, x1, y1, x2, y2, createShaderOutput):
@@ -2856,11 +3014,7 @@ class BlenderMaterials:
 
     # **********************************************************************************
     def __getSubsurfaceColor(node):
-        if 'Subsurface Color' in node.inputs:
-            # Blender 3
-            return node.inputs['Subsurface Color']
-
-        # Blender 4 - Subsurface Colour has been removed, so just use the base colour instead
+        # Blender 4 removed 'Subsurface Color', so use the base colour instead
         return node.inputs['Base Color']
 
     # **********************************************************************************
@@ -3161,18 +3315,10 @@ class BlenderMaterials:
                 # link nodes together
                 group.links.new(node_input.outputs['Color'], node_sep_hsv.inputs['Color'])
                 group.links.new(node_input.outputs['Normal'], node_principled.inputs['Normal'])
-                if hasattr(node_sep_hsv.outputs, 'H'):
-                    # Before Blender 5
-                    group.links.new(node_sep_hsv.outputs['H'], node_com_hsv.inputs['H'])
-                    group.links.new(node_sep_hsv.outputs['S'], node_com_hsv.inputs['S'])
-                    group.links.new(node_sep_hsv.outputs['V'], node_multiply.inputs[0])
-                    group.links.new(node_multiply.outputs[0], node_com_hsv.inputs['V'])
-                else:
-                    # Blender 5
-                    group.links.new(node_sep_hsv.outputs[0], node_com_hsv.inputs[0])    # Hue
-                    group.links.new(node_sep_hsv.outputs[1], node_com_hsv.inputs[1])    # Saturation
-                    group.links.new(node_sep_hsv.outputs[2], node_multiply.inputs[0])   # Value
-                    group.links.new(node_multiply.outputs[0], node_com_hsv.inputs[2])
+                group.links.new(node_sep_hsv.outputs[0], node_com_hsv.inputs[0])    # Hue
+                group.links.new(node_sep_hsv.outputs[1], node_com_hsv.inputs[1])    # Saturation
+                group.links.new(node_sep_hsv.outputs[2], node_multiply.inputs[0])   # Value
+                group.links.new(node_multiply.outputs[0], node_com_hsv.inputs[2])
                 group.links.new(node_com_hsv.outputs['Color'], node_principled.inputs['Base Color'])
                 group.links.new(node_com_hsv.outputs['Color'], BlenderMaterials.__getSubsurfaceColor(node_principled))
                 group.links.new(node_tex_coord.outputs['Object'], node_tex_wave.inputs['Vector'])
@@ -3371,7 +3517,7 @@ class BlenderMaterials:
 
     # **********************************************************************************
     def createBlenderNodeGroups():
-        BlenderMaterials.usePrincipledShader = BlenderMaterials.__hasPrincipledShader and Options.usePrincipledShaderWhenAvailable
+        BlenderMaterials.usePrincipledShader = Options.usePrincipledShaderWhenAvailable
 
         BlenderMaterials.__createBlenderDistanceToCenterNodeGroup()
         BlenderMaterials.__createBlenderVectorElementPowerNodeGroup()
@@ -3453,36 +3599,15 @@ def addSharpEdges(bm, ob, geometry, filename):
                 # Make edge sharp
                 meshEdge.smooth = False
 
-        # Set bevel weights (Blender 3)
-        if bpy.app.version < (4, 0, 0):
-            # Blender 3
-            # Find layer for bevel weights
-            if 'BevelWeight' in bm.edges.layers.bevel_weight:
-                bwLayer = bm.edges.layers.bevel_weight['BevelWeight']
-            elif '' in bm.edges.layers.bevel_weight:
-                bwLayer = bm.edges.layers.bevel_weight['']
-            else:
-                bwLayer = None
-
-            for meshEdge in bm.edges:
-                v0 = meshEdge.verts[0].index
-                v1 = meshEdge.verts[1].index
-                if (v0, v1) in edgeIndices:
-                    # Add bevel weight
-                    if bwLayer is not None:
-                        meshEdge[bwLayer] = 1.0
-
         bm.to_mesh(ob.data)
 
-        # In Blender 4, set the edge weights (on ob.data rather than bm these days)
-        if (bpy.app.version >= (4, 0, 0)):
-            # Blender 4
-            bevel_weight_attr = ob.data.attributes.new("bevel_weight_edge", "FLOAT", "EDGE")
-            for idx, meshEdge in enumerate(bm.edges):
-                v0 = meshEdge.verts[0].index
-                v1 = meshEdge.verts[1].index
-                if (v0, v1) in edgeIndices:
-                    bevel_weight_attr.data[idx].value = 1.0
+        # Set the bevel weights of the sharp edges (the Bevel modifier uses them)
+        bevel_weight_attr = ob.data.attributes.new("bevel_weight_edge", "FLOAT", "EDGE")
+        for idx, meshEdge in enumerate(bm.edges):
+            v0 = meshEdge.verts[0].index
+            v1 = meshEdge.verts[1].index
+            if (v0, v1) in edgeIndices:
+                bevel_weight_attr.data[idx].value = 1.0
 
 
 # Commented this next section out as it fails for certain pieces.
@@ -3916,6 +4041,18 @@ def createMesh(name, meshName, geometry):
             mesh.validate()
             mesh.update()
 
+            # Add texture coordinates if any face is textured
+            if any(faceInfo.uvs is not None for faceInfo in geometry.faceInfo):
+                assert len(mesh.polygons) == len(geometry.faces)
+                uvLayer = mesh.uv_layers.new(name="UVMap")
+                uvs = [0.0] * (2 * len(mesh.loops))
+                for polygon, faceInfo in zip(mesh.polygons, geometry.faceInfo):
+                    if faceInfo.uvs is None:
+                        continue
+                    for corner, loopIndex in enumerate(polygon.loop_indices):
+                        uvs[2 * loopIndex], uvs[2 * loopIndex + 1] = faceInfo.uvs[corner]
+                uvLayer.data.foreach_set("uv", uvs)
+
             # Set a custom parameter to record the options used to create this mesh
             # Used for caching.
             mesh['customMeshOptions'] = Options.meshOptionsString()
@@ -3936,7 +4073,7 @@ def createMesh(name, meshName, geometry):
                 # For debugging purposes, we can make sloped faces blue:
                 # if isSlopeMaterial:
                 #     faceColour = "1"
-                material = BlenderMaterials.getMaterial(faceColour, isSlopeMaterial)
+                material = BlenderMaterials.getMaterial(faceColour, isSlopeMaterial, faceInfo.texmap)
 
                 if material is not None:
                     if mesh.materials.get(material.name) is None:
@@ -4050,39 +4187,6 @@ def createBlenderObjectsFromNode(node,
         # Create Blender Object
         ob = bpy.data.objects.new(blenderName, mesh)
         ob.matrix_local = blenderParentTransform @ localMatrix
-
-        if newMeshCreated:
-            # For performance reasons we try to avoid using bpy.ops.* methods
-            # (e.g. we use bmesh.* operations instead).
-            # See discussion: http://blender.stackexchange.com/questions/7358/python-performance-with-blender-operators
-
-            # Use bevel weights (added to sharp edges) - Only available for Blender version < 3.4
-            if hasattr(ob.data, "use_customdata_edge_bevel"):
-                ob.data.use_customdata_edge_bevel = True
-            else:
-                if bpy.app.version < (4, 0, 0):
-                    # Add to scene
-                    linkToScene(ob)
-
-                    # Blender 3.4 removed 'ob.data.use_customdata_edge_bevel', so this seems to be the alternative:
-                    # See https://blender.stackexchange.com/a/270716
-                    area_type = 'VIEW_3D' # change this to use the correct Area Type context you want to process in
-                    areas  = [area for area in bpy.context.window.screen.areas if area.type == area_type]
-
-                    if len(areas) <= 0:
-                        raise Exception(f"Make sure an Area of type {area_type} is open or visible on your screen!")
-                    selectObject(ob)
-                    bpy.ops.object.mode_set(mode='EDIT')
-
-                    with bpy.context.temp_override(
-                        window=bpy.context.window,
-                        area=areas[0],
-                        regions=[region for region in areas[0].regions if region.type == 'WINDOW'][0],
-                        screen=bpy.context.window.screen):
-                        bpy.ops.mesh.customdata_bevel_weight_edge_add()
-                    bpy.ops.object.mode_set(mode='OBJECT')
-
-                    unlinkFromScene(ob)
 
         # The lines out of an empty shown in the viewport are scaled to a reasonable size
         ob.empty_display_size = 250.0 * globalScaleFactor
@@ -4321,12 +4425,8 @@ def setupRealisticLook():
         if scene.camera is not None:
             scene.camera.data.type = 'PERSP'
 
-        # For Blender Render, reset to opaque background (Not available in Blender 3.5.1 or higher.)
-        if hasattr(render, "alpha_mode"):
-            render.alpha_mode = 'SKY'
-
-        # Turn off cycles transparency
-        scene.cycles.film_transparent = False
+        # Turn off film transparency
+        render.film_transparent = False
 
         # Get the render/view layers we are interested in:
         layers = getLayers(scene)
@@ -4430,34 +4530,19 @@ def setupInstructionsLook():
     if scene.camera is not None:
         scene.camera.data.type = 'ORTHO'
 
-    # For Blender Render, set transparent background. (Not available in Blender 3.5.1 or higher.)
-    if hasattr(render, "alpha_mode"):
-        render.alpha_mode = 'TRANSPARENT'
-
-    # Turn on cycles transparency
-    if hasattr(scene, 'render') and hasattr(scene.render, 'film_transparent'):
-        # Blender 5
-        scene.render.film_transparent = True
-    elif hasattr(scene.cycles, 'film_transparent'):
-        # Before Blender 5
-        scene.cycles.film_transparent = True
+    # Turn on film transparency
+    render.film_transparent = True
 
     # Increase max number of transparency bounces to at least 80
     # This avoids artefacts when multiple transparent objects are behind each other
     if scene.cycles.transparent_max_bounces < 80:
         scene.cycles.transparent_max_bounces = 80
 
-    # Add collections / groups, if not already present
-    if hasCollections:
-        createCollection(scene, 'Black Edged Bricks Collection')
-        createCollection(scene, 'White Edged Bricks Collection')
-        createCollection(scene, 'Solid Bricks Collection')
-        createCollection(scene, 'Transparent Bricks Collection')
-    else:
-        if bpy.data.groups.find('Black Edged Bricks Collection') < 0:
-            bpy.data.groups.new('Black Edged Bricks Collection')
-        if bpy.data.groups.find('White Edged Bricks Collection') < 0:
-            bpy.data.groups.new('White Edged Bricks Collection')
+    # Add collections, if not already present
+    createCollection(scene, 'Black Edged Bricks Collection')
+    createCollection(scene, 'White Edged Bricks Collection')
+    createCollection(scene, 'Solid Bricks Collection')
+    createCollection(scene, 'Transparent Bricks Collection')
 
     # Find or create the render/view layers we are interested in:
     layers = getLayers(scene)
@@ -4486,11 +4571,9 @@ def setupInstructionsLook():
     # Restore current view layer
     bpy.context.window.view_layer = current_view_layer
 
-    # Use Z layer (defaults to off in Blender 3.5.1)
-    if hasattr(layers[transLayer], "use_pass_z"):
-        layers[transLayer].use_pass_z = True
-    if hasattr(layers[solidLayer], "use_pass_z"):
-        layers[solidLayer].use_pass_z = True
+    # Use Z layer (defaults to off)
+    layers[transLayer].use_pass_z = True
+    layers[solidLayer].use_pass_z = True
 
     # Disable any render/view layers that are not needed
     for i in range(len(layers)):
@@ -4664,10 +4747,6 @@ def setupInstructionsLook():
             viewer.location = (950, 500)
             links.new(zCombine.outputs[0], viewer.inputs[0])
 
-    # Blender 3 only: link the Z from the Z Combine to the composite. This is not present in Blender 4.
-    if bpy.app.version < (4, 0, 0):
-        links.new(zCombine.outputs[1], composite.inputs[2])
-
 
 # **************************************************************************************
 def iterateCameraPosition(camera, render, vcentre3d, moveCamera):
@@ -4684,11 +4763,7 @@ def iterateCameraPosition(camera, render, vcentre3d, moveCamera):
     # Calculate matrix to take 3d points into normalised camera space
     modelview_matrix = camera.matrix_world.inverted()
 
-    get_depsgraph_method = getattr(bpy.context, "evaluated_depsgraph_get", None)
-    if callable(get_depsgraph_method):
-        depsgraph = get_depsgraph_method()
-    else:
-        depsgraph = bpy.context.depsgraph
+    depsgraph = bpy.context.evaluated_depsgraph_get()
     projection_matrix = camera.calc_matrix_camera(
         depsgraph,
         x=render.resolution_x,

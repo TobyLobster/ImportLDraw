@@ -12,16 +12,16 @@ It supports **.mpd**, **.ldr**, **.l3b**, and **.dat** file formats.
 It's intended to be accurate, compatible, and fast (in that order of priority).
 
 ## Features ##
-+ Works with Blender 2.81 up to at least Blender 5.1.0
++ Works with Blender 4.0 up to at least Blender 5.1.0 (for Blender 2.81 to 3.6, use version 1.2.3 from the [Releases](https://github.com/TobyLobster/ImportLDraw/releases) page)
 + **Mac**, **Windows** and **Linux** supported.
 + **Bricksmith** compatible.
 + **MPD** file compatible.
 + **LeoCAD** groups and cameras (both perspective and orthographic) supported.
 + **LSynth** bendable parts supported (synthesized models).
-+ *Cycles* and *Blender Render* engines supported. It renders either engine from a single scene.
++ *Cycles* (realistic look) and *EEVEE* (instructions look) render engines supported.
 + Import **photorealistic** look, or **Instructions** look.
 + **Physically Based Realistic materials** - standard brick material, transparent, rubber, chrome, metal, pearlescent, glow-in-the-dark, glitter and speckle.
-+ **Principled Shader supported** Uses Blender's 'Principled Shader' where available for optimal look (but still works well when unavailable).
++ **Principled Shader** - Uses Blender's Principled BSDF shader for an optimal look.
 + **Accurate colour handling**. Correct colour space management is used so that e.g. black parts look black.
 + **Direct colours** supported.
 + **Back face culling** - fully parses all BFC information, for accurate normals.
@@ -46,14 +46,14 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 + Choose from the menu: Edit > Preferences
 + Click the *Add-ons* tab
 
-For Blender 2/3:
+Blender 4.0 and 4.1:
 + Click the *Install...* button
 + Navigate to the zip file you downloaded and select it
 + Find *Import LDraw* in the list of Add-ons (search for *LDraw* if necessary)
 + Tick the check mark next to it to activate the add-on.
 + Click the *Save Preferences* button so that it will still be active next time you launch Blender.
 
-Blender 4 and above:
+Blender 4.2 and above:
 + From the down arrow at the top right, choose *Install from Disk...*
 + Navigate to the zip file you downloaded and select it
 + Find *Import LDraw* in the list of Add-ons (search for *LDraw* if necessary)

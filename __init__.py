@@ -25,8 +25,8 @@ bl_info = {
     "name": "Import LDraw",
     "description": "Import LDraw models in .io .mpd .ldr .l3b and .dat formats",
     "author": "Toby Nelson <tobymnelson@gmail.com>",
-    "version": (1, 2,  3),
-    "blender": (2, 81, 0),
+    "version": (1, 3, 0),
+    "blender": (4, 0, 0),
     "location": "File > Import",
     "warning": "",
     "wiki_url": "https://github.com/TobyLobster/ImportLDraw",
@@ -44,23 +44,13 @@ def menuImport(self, context):
 def register():
     """Register Menu Listing."""
     bpy.utils.register_class(importldraw.ImportLDrawOps)
-    if hasattr(bpy.types, 'TOPBAR_MT_file_import'):
-        # Blender 2.80
-        bpy.types.TOPBAR_MT_file_import.append(menuImport)
-    else:
-        # Blender 2.79
-        bpy.types.INFO_MT_file_import.append(menuImport)
+    bpy.types.TOPBAR_MT_file_import.append(menuImport)
 
 
 def unregister():
     """Unregister Menu Listing."""
     bpy.utils.unregister_class(importldraw.ImportLDrawOps)
-    if hasattr(bpy.types, 'TOPBAR_MT_file_import'):
-        # Blender 2.80
-        bpy.types.TOPBAR_MT_file_import.remove(menuImport)
-    else:
-        # Blender 2.79
-        bpy.types.INFO_MT_file_import.remove(menuImport)
+    bpy.types.TOPBAR_MT_file_import.remove(menuImport)
 
 
 if __name__ == "__main__":

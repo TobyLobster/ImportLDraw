@@ -241,6 +241,12 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         default=prefs.get("useUnofficialParts", True)
     )
 
+    useTextures: BoolProperty(
+        name="Import textures",
+        description="Apply texture images to printed parts and stickers that use !TEXMAP (otherwise their untextured fallback shapes are used)",
+        default=prefs.get("useTextures", True)
+    )
+
     useLogoStuds: BoolProperty(
         name="Show 'LEGO' logo on studs",
         description="Shows the LEGO logo on each stud (at the expense of some extra geometry and import time)",
@@ -322,6 +328,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         box.prop(self, "linkParts")
         box.prop(self, "useUnofficialParts")
 
+        box.prop(self, "useTextures")
         box.prop(self, "useLogoStuds")
         box.prop(self, "instanceStuds")
 
@@ -356,6 +363,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("flattenHierarchy",      self.flatten)
         ImportLDrawOps.prefs.set("minifigHierarchy",      self.minifigHierarchy)
         ImportLDrawOps.prefs.set("useUnofficialParts",    self.useUnofficialParts)
+        ImportLDrawOps.prefs.set("useTextures",           self.useTextures)
         ImportLDrawOps.prefs.set("useLogoStuds",          self.useLogoStuds)
         ImportLDrawOps.prefs.set("instanceStuds",         self.instanceStuds)
         ImportLDrawOps.prefs.set("resolveNormals",        self.resolveNormals)
@@ -363,9 +371,6 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("positionCamera",        self.positionCamera)
         ImportLDrawOps.prefs.set("cameraBorderPercentage",self.cameraBorderPercentage)
         ImportLDrawOps.prefs.save()
-
-        # Set bpy related variables here since it isn't available immediately on Blender startup
-        loadldraw.hasCollections = hasattr(bpy.data, "collections")
 
         # Set import options and import
         loadldraw.Options.ldrawDirectory             = self.ldrawPath
@@ -387,6 +392,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.Options.positionObjectOnGroundAtOrigin = self.positionOnGround
         loadldraw.Options.flattenHierarchy           = self.flatten
         loadldraw.Options.minifigHierarchy           = self.minifigHierarchy
+        loadldraw.Options.useTextures                = self.useTextures
         loadldraw.Options.useLogoStuds               = self.useLogoStuds
         loadldraw.Options.logoStudVersion            = "4"
         loadldraw.Options.instanceStuds              = self.instanceStuds
