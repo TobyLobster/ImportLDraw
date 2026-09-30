@@ -73,7 +73,7 @@ class Preferences():
         self.__prefsFilepath = os.path.join(self.__prefsPath, "ImportLDrawPreferences.ini")
         self.__config        = configparser.RawConfigParser()
         self.__prefsRead     = self.__config.read(self.__prefsFilepath)
-        if self.__prefsRead and not self.__config[Preferences.__sectionName]:
+        if self.__prefsRead and not self.__config.has_section(Preferences.__sectionName):
             self.__prefsRead = False
 
     def get(self, option, default):
@@ -99,10 +99,9 @@ class Preferences():
             with open(self.__prefsFilepath, 'w') as configfile:
                 self.__config.write(configfile)
             return True
-        except Exception:
+        except Exception as e:
             # Fail gracefully
-            e = sys.exc_info()[0]
-            debugPrint("WARNING: Could not save preferences. {0}".format(e))
+            loadldraw.debugPrint("WARNING: Could not save preferences. {0}".format(e))
             return False
 
 
@@ -168,7 +167,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
     colourScheme: EnumProperty(
         name="Colour scheme options",
         description="Colour scheme options",
-        default=prefs.get("useColurScheme", "lgeo"),
+        default=prefs.get("useColourScheme", "lgeo"),
         items=(
             ("lgeo", "Realistic colours", "Uses the LGEO colour scheme for realistic colours."),
             ("ldraw", "Original LDraw colours", "Uses the standard LDraw colour scheme. Looks good with the Instructions Look."),

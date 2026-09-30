@@ -1465,10 +1465,10 @@ class LDrawFile:
             # Add the subdirectories of the directory to the search paths, notably 'CustomParts' and it's subdirectories
 
             # Also add the Stud.io 'local' directory for its 'CustomParts' folder
-            if Configure.isWindows:
+            if Configure.isWindows():
                 # But also search CustomParts in: C:\Users\<USERNAME>\AppData\Local\Stud.io\
                 localDir = os.path.expanduser(os.path.join("~", "AppData", "Local", "Stud.io"))
-            elif Configure.isMac:
+            elif Configure.isMac():
                 # But also search CustomParts in: ~/.local/share/Stud.io/
                 localDir = os.path.expanduser(os.path.join("~", ".local", "share", "Stud.io"))
             else:
@@ -3822,11 +3822,19 @@ def smoothShadingAndFreestyleEdges(ob):
 
     if Options.instructionsLook:
         # Mark all sharp edges as freestyle edges
-        me = bpy.context.object.data
-        for e in me.edges:
-            if hasattr(e, 'use_freestyle_mark'):
+        me = ob.data
+        if len(me.edges) > 0:
+            sharp = [False] * len(me.edges)
+            me.edges.foreach_get("use_edge_sharp", sharp)
+            if hasattr(me.edges[0], 'use_freestyle_mark'):
                 # Before Blender 5
-                e.use_freestyle_mark = e.use_edge_sharp
+                me.edges.foreach_set("use_freestyle_mark", sharp)
+            else:
+                # Blender 5 stores freestyle edge marks in a boolean edge attribute
+                attr = me.attributes.get("freestyle_edge")
+                if attr is None:
+                    attr = me.attributes.new("freestyle_edge", 'BOOLEAN', 'EDGE')
+                attr.data.foreach_set("value", sharp)
 
     # Deselect object
     deselectObject(ob)
@@ -4171,7 +4179,7 @@ def setupRealisticLook():
 
         # Create Compositing Nodes
         scene.use_nodes = True
-        if hasattr(bpy.ops.node, "new_compositing_node_group"):
+        if hasattr(scene, "compositing_node_group"):
             # Blender 5
             node_tree = bpy.data.node_groups.new("Compositor Nodes", "CompositorNodeTree")
             scene.compositing_node_group = node_tree
@@ -4397,7 +4405,7 @@ def setupInstructionsLook():
 
     # Create Compositing Nodes
     scene.use_nodes = True
-    if hasattr(bpy.ops.node, "new_compositing_node_group"):
+    if hasattr(scene, "compositing_node_group"):
         # Blender 5
         if "Compositor Nodes" in bpy.data.node_groups:
             node_tree = bpy.data.node_groups["Compositor Nodes"]
@@ -4431,12 +4439,14 @@ def setupInstructionsLook():
         if hasattr(zCombine, "use_alpha"):
             zCombine.use_alpha = True
         else:
-            zCombine.inputs[4].default_value = True     # Use alpha
+            # Blender 5
+            zCombine.inputs["Use Alpha"].default_value = True
 
         if hasattr(zCombine, "use_antialias_z"):
             zCombine.use_antialias_z = True
         else:
-            zCombine.inputs[4].default_value = True     # Antialias
+            # Blender 5
+            zCombine.inputs["Anti-Alias"].default_value = True
 
         if "Set Alpha" in node_tree.nodes:
             setAlpha = node_tree.nodes["Set Alpha"]
@@ -4451,9 +4461,6 @@ def setupInstructionsLook():
         else:
             # Blender 5
 
-            # This is a bit off topic, but in Blender 5 the alpha node value has changed meaning it seems
-            setAlpha.inputs[1].default_value = 1.5
-
             new_socket = ensure_output_color_socket(node_tree, 'Result')
 
             # Remove any existing Group Output node(s)
@@ -4464,8 +4471,9 @@ def setupInstructionsLook():
             group_output = node_tree.nodes.new("NodeGroupOutput")
             composite = group_output
 
-            # Add viewer node
-            viewer = node_tree.nodes.new('CompositorNodeViewer')
+            # Add viewer node (reusing any existing one)
+            viewers = [n for n in node_tree.nodes if n.bl_idname == 'CompositorNodeViewer']
+            viewer = viewers[0] if viewers else node_tree.nodes.new('CompositorNodeViewer')
 
         composite.location = (950, 400)
 
@@ -4718,7 +4726,7 @@ def loadFromFile(context, filename, isFullFilepath=True):
 
     if node.file.isModel:
         # Fix top level rotation from LDraw coordinate space to Blender coordinate space
-        node.file.geometry.points = [Math.rotationMatrix * p for p in node.file.geometry.points]
+        node.file.geometry.points = [Math.rotationMatrix @ p for p in node.file.geometry.points]
         node.file.geometry.edges  = [(Math.rotationMatrix @ e[0], Math.rotationMatrix @ e[1]) for e in node.file.geometry.edges]
 
         for childNode in node.file.childNodes:
