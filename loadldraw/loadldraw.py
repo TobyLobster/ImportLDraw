@@ -661,9 +661,87 @@ class LegoColours:
             # Colour Space Management: Convert sRGB colour values to Blender's linear RGB colour space
             LegoColours.colours[index]["colour"] = LegoColours.sRGBtoLinearRGB(sRGBColour)
 
+    # Colours used if they are missing from both LDConfig.ldr and Stud.io's colour table.
+    # (code: (name, sRGB hex, alpha))
+    __fallbackColours = {
+        10375:  ("Trans_Black", "212121", 128 / 256.0),     # Added to LDConfig.ldr in 2024 (code 40 became Trans_Brown)
+        100040: ("Trans_Black", "5E5E5C", 128 / 256.0),     # Stud.io's code for Trans-Black
+    }
+
+    def __addColour(code, name, hexDigits, alpha, material="BASIC"):
+        linearRGBA = LegoColours.hexDigitsToLinearRGBA(hexDigits, alpha)
+        LegoColours.colours[code] = {
+            "name": name,
+            "colour": linearRGBA[0:3],
+            "alpha": alpha,
+            "luminance": 0.0,
+            "material": material
+        }
+
+    def __findStudioColourTable():
+        """Returns the path of Stud.io's colour table (StudioColorDefinition.txt) if found, else None."""
+        candidates = []
+        if Configure.ldrawInstallDirectory:
+            # Stud.io's own LDraw library is at 'Studio 2.0/ldraw', and its data folder is 'Studio 2.0/data'
+            studioDir = os.path.dirname(os.path.normpath(Configure.ldrawInstallDirectory))
+            candidates.append(os.path.join(studioDir, "data", "StudioColorDefinition.txt"))
+        if Configure.isMac():
+            candidates.append("/Applications/Studio 2.0/data/StudioColorDefinition.txt")
+        elif Configure.isWindows():
+            candidates.append("C:\\Program Files\\Studio 2.0\\data\\StudioColorDefinition.txt")
+            candidates.append("C:\\Program Files (x86)\\Studio 2.0\\data\\StudioColorDefinition.txt")
+        for candidate in candidates:
+            candidate = FileSystem.pathInsensitive(candidate)
+            if os.path.isfile(candidate):
+                return candidate
+        return None
+
+    def __readStudioColourTable():
+        """Adds colours from Stud.io's colour table that are missing from LDConfig.ldr.
+        Stud.io uses some colour codes of its own (e.g. 100040 for Trans-Black), and its copy
+        of LDConfig.ldr can be very old."""
+        filepath = LegoColours.__findStudioColourTable()
+        if filepath is None:
+            return
+
+        materials = {
+            "Chrome Colors":   "CHROME",
+            "Pearl Colors":    "PEARLESCENT",
+            "Metallic Colors": "METAL",
+            "Rubber Colors":   "RUBBER",
+        }
+
+        try:
+            with open(filepath, "rt", encoding="utf_8_sig", errors="replace") as f:
+                lines = f.readlines()
+        except OSError:
+            return
+
+        # Tab separated columns: Studio Color Code, BL Color Code, LDraw Color Code, LDD color code,
+        # Studio Color Name, BL Color Name, LDraw Color Name, LDD Color Name, RGB value, Alpha, CategoryName, ...
+        for line in lines[1:]:
+            columns = line.rstrip("\r\n").split("\t")
+            if len(columns) < 11:
+                continue
+            try:
+                code = int(columns[2])
+                hexDigits = columns[8].strip().lstrip("#")
+                alpha = float(columns[9])
+            except ValueError:
+                continue
+            if code in LegoColours.colours or len(hexDigits) != 6:
+                continue
+            name = (columns[6].strip() or columns[4].strip()).replace(" ", "_")
+            try:
+                LegoColours.__addColour(code, name, hexDigits, alpha, materials.get(columns[10].strip(), "BASIC"))
+            except ValueError:
+                continue
+
     def __readColourTable():
         """Reads the colour values from the LDConfig.ldr file. For details of the
         Ldraw colour system see: http://www.ldraw.org/article/547"""
+        LegoColours.colours = {}
+
         if Options.useColourScheme == "alt":
             configFilename = "LDCfgalt.ldr"
         else:
@@ -733,6 +811,12 @@ class LegoColours:
                         colour["maxsize"]          = LegoColours.__getValue(subline, "MAXSIZE")
 
                     LegoColours.colours[code] = colour
+
+        # Add any colours that LDConfig.ldr doesn't define (e.g. if it is out of date)
+        LegoColours.__readStudioColourTable()
+        for code, (name, hexDigits, alpha) in LegoColours.__fallbackColours.items():
+            if code not in LegoColours.colours:
+                LegoColours.__addColour(code, name, hexDigits, alpha)
 
         if Options.useColourScheme == "lgeo":
             # LGEO is a parts library for rendering LEGO using the povray rendering software.
