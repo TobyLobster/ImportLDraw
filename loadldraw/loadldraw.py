@@ -1263,7 +1263,7 @@ class TexMap:
     """
 
     __parameterCounts = {"PLANAR": 9, "CYLINDRICAL": 10, "SPHERICAL": 11}
-    __supportedMethods = ("PLANAR",)
+    __supportedMethods = ("PLANAR", "CYLINDRICAL", "SPHERICAL")
 
     def __init__(self, method, numbers, imageName, glossmapName, declaringFilepath):
         self.method = method
@@ -1272,18 +1272,84 @@ class TexMap:
         self.declaringFilepath = declaringFilepath
         self.supported = (method in TexMap.__supportedMethods) and (imageName != "")
         self.localToTex = None          # Matrix from the coordinates the texture is used in to those it was declared in (None = the same)
+        self.wrapU = False              # The image goes all the way round (360 degrees), so U wraps around
         self.points = []
         self.angles = []
-        if self.supported:
-            self.points = [Math.scaleMatrix @ mathutils.Vector(numbers[i:i + 3]) for i in (0, 3, 6)]
-            self.angles = numbers[9:]
-            p1, p2, p3 = self.points
+        if not self.supported:
+            return
+
+        self.points = [Math.scaleMatrix @ mathutils.Vector(numbers[i:i + 3]) for i in (0, 3, 6)]
+        self.angles = [math.radians(a) for a in numbers[9:]]
+        p1, p2, p3 = self.points
+
+        if method == "PLANAR":
+            # p1 = top left of the image, p2 = top right, p3 = bottom left
             self.uAxis = p2 - p1
             self.vAxis = p3 - p1
             self.uLengthSquared = self.uAxis.length_squared
             self.vLengthSquared = self.vAxis.length_squared
             if self.uLengthSquared == 0.0 or self.vLengthSquared == 0.0:
                 self.supported = False
+
+        elif method == "CYLINDRICAL":
+            # p1 = centre of the bottom, p2 = centre of the top, p3 = a point on the bottom edge where
+            # the bottom centre of the image touches. The image covers angle a around the axis.
+            self.centre = p2
+            axis = p2 - p1
+            self.height = axis.length
+            self.normal = axis / self.height if self.height > 0.0 else None
+            self.direction = self.__radial(p3) if self.normal is not None else None
+            if self.direction is None or self.angles[0] == 0.0:
+                self.supported = False
+            else:
+                self.wrapU = abs(self.angles[0]) >= 2.0 * math.pi - 1e-6
+
+        elif method == "SPHERICAL":
+            # p1 = centre, p2 = where the centre of the image touches the sphere, p3 = a third point
+            # that with p1 and p2 makes the plane that cuts the image in half horizontally. The image
+            # covers angle a around the sphere and angle b from pole to pole.
+            self.centre = p1
+            normal = -((p1 - p2).cross(p3 - p2))
+            toImageCentre = p2 - p1
+            if normal.length == 0.0 or toImageCentre.length == 0.0 or self.angles[0] == 0.0 or self.angles[1] == 0.0:
+                self.supported = False
+            else:
+                self.normal = normal.normalized()                   # Towards the top of the image
+                self.direction = toImageCentre.normalized()
+                self.wrapU = abs(self.angles[0]) >= 2.0 * math.pi - 1e-6
+
+    def __radial(self, point):
+        """The unit direction from the axis (through self.centre, along self.normal) to the point, or None if on the axis"""
+        d = point - self.centre
+        radial = d - d.dot(self.normal) * self.normal
+        if radial.length <= 1e-6 * max(d.length, 1e-12):
+            return None
+        return radial.normalized()
+
+    def __angles(self, points):
+        """
+        The angle around the axis of each point, measured from the image centre line, going
+        anticlockwise when seen from the top. Within one face the angles are kept continuous
+        (not jumping from +180 to -180 degrees), so a face that crosses the join at the back
+        maps onto a continuous range of the image. Points on the axis get None.
+        """
+        result = []
+        baseDirection = None
+        baseAngle = 0.0
+        for point in points:
+            radial = self.__radial(point)
+            if radial is None:
+                result.append(None)
+            elif baseDirection is None:
+                baseDirection = radial
+                baseAngle = math.atan2(self.direction.cross(radial).dot(self.normal), radial.dot(self.direction))
+                result.append(baseAngle)
+            else:
+                result.append(baseAngle + math.atan2(baseDirection.cross(radial).dot(self.normal), radial.dot(baseDirection)))
+        # A point on the axis (a pole) takes the average angle of the others
+        known = [angle for angle in result if angle is not None]
+        average = sum(known) / len(known) if known else 0.0
+        return [average if angle is None else angle for angle in result]
 
     def parse(parameters, declaringFilepath):
         """Parses the parameters that follow 'START' or 'NEXT'. Always returns a TexMap (check 'supported')."""
@@ -1312,8 +1378,6 @@ class TexMap:
             rest = rest[:index]
         imageName = " ".join(rest)
 
-        if method not in TexMap.__supportedMethods:
-            printWarningOnce("!TEXMAP {0} is not supported yet (using the fallback geometry)".format(method))
         return TexMap(method, numbers, imageName, glossmapName, declaringFilepath)
 
     def transformed(self, matrix):
@@ -1331,14 +1395,25 @@ class TexMap:
         the current coordinates. Used to name and cache meshes.
         """
         localToTex = self.localToTex if self.localToTex is not None else Math.identityMatrix
-        linear = localToTex.to_3x3().transposed()
         values = []
-        # PLANAR: u and v are each an affine function of the point, u = a.p + b
-        for axis, lengthSquared in ((self.uAxis, self.uLengthSquared), (self.vAxis, self.vLengthSquared)):
-            a = (linear @ axis) / lengthSquared
-            b = (localToTex.translation - self.points[0]).dot(axis) / lengthSquared
-            values.extend(a)
-            values.append(b)
+        if self.method == "PLANAR":
+            # u and v are each an affine function of the point, u = a.p + b
+            linear = localToTex.to_3x3().transposed()
+            for axis, lengthSquared in ((self.uAxis, self.uLengthSquared), (self.vAxis, self.vLengthSquared)):
+                a = (linear @ axis) / lengthSquared
+                b = (localToTex.translation - self.points[0]).dot(axis) / lengthSquared
+                values.extend(a)
+                values.append(b)
+        else:
+            # The defining points, in the current coordinates, and the angles
+            try:
+                texToLocal = localToTex.inverted()
+            except ValueError:
+                texToLocal = Math.identityMatrix
+                values.extend(v for row in localToTex for v in row)
+            for point in self.points:
+                values.extend(texToLocal @ point)
+            values.extend(self.angles)
         scale = max(abs(v) for v in values) or 1.0
         text = "|".join([self.method,
                          self.imageName.lower(),
@@ -1347,18 +1422,39 @@ class TexMap:
                         ["{0:.6f}".format(round(v / scale, 6) + 0.0) for v in values])
         return hashlib.md5(text.encode("utf-8")).hexdigest()[:8]
 
-    def uv(self, point):
-        """The (u, v) texture coordinate of a point, with v measured upwards as Blender expects."""
-        if self.localToTex is not None:
-            point = self.localToTex @ point
-        d = point - self.points[0]
-        u = d.dot(self.uAxis) / self.uLengthSquared
-        v = d.dot(self.vAxis) / self.vLengthSquared
-        # LDraw's v runs down the image from its top edge; Blender's runs up from the bottom
-        return (u, 1.0 - v)
-
     def uvs(self, points):
-        return [self.uv(p) for p in points]
+        """
+        The (u, v) texture coordinates of the corners of one face, with v measured upwards as
+        Blender expects (LDraw's v runs down the image from its top edge).
+        The maths follows LDView's, the reference implementation.
+        """
+        if self.localToTex is not None:
+            points = [self.localToTex @ p for p in points]
+
+        if self.method == "PLANAR":
+            result = []
+            for point in points:
+                d = point - self.points[0]
+                u = d.dot(self.uAxis) / self.uLengthSquared
+                v = d.dot(self.vAxis) / self.vLengthSquared
+                result.append((u, 1.0 - v))
+            return result
+
+        if self.method == "CYLINDRICAL":
+            # U: angle around the axis. V: height up the axis (image top at the top of the cylinder)
+            angles = self.__angles(points)
+            return [(0.5 + angle / self.angles[0],
+                     1.0 - self.normal.dot(self.centre - point) / self.height)
+                    for angle, point in zip(angles, points)]
+
+        # SPHERICAL. U: longitude. V: latitude (image top towards 'normal')
+        angles = self.__angles(points)
+        result = []
+        for angle, point in zip(angles, points):
+            d = point - self.centre
+            latitude = math.asin(max(-1.0, min(1.0, d.normalized().dot(self.normal)))) if d.length > 0.0 else 0.0
+            result.append((0.5 + angle / self.angles[0], 0.5 + latitude / self.angles[1]))
+        return result
 
 
 # **************************************************************************************
@@ -2179,7 +2275,7 @@ class BlenderMaterials:
             return name + " Instructions"
         return name
 
-    def __createNodeBasedMaterial(blenderName, col, isSlopeMaterial=False, image=None):
+    def __createNodeBasedMaterial(blenderName, col, isSlopeMaterial=False, image=None, wrapU=False):
         """Set Cycles Material Values."""
 
         # Reuse current material if it exists, otherwise create a new material
@@ -2242,7 +2338,7 @@ class BlenderMaterials:
                 BlenderMaterials.__createCyclesConcaveWalls(nodes, links, 20 * globalScaleFactor)
 
             if image is not None:
-                BlenderMaterials.__addTexture(nodes, links, image, colour)
+                BlenderMaterials.__addTexture(nodes, links, image, colour, wrapU)
 
             BlenderMaterials.__linkUnconnectedNormals(nodes, links)
 
@@ -2253,11 +2349,13 @@ class BlenderMaterials:
         material["Lego.isTransparent"] = False
         return material
 
-    def __addTexture(nodes, links, image, colour):
+    def __addTexture(nodes, links, image, colour, wrapU=False):
         """
         Composites a texture image over the part colour: the image's alpha mixes between the
         colour and the image, and the result feeds the 'Color' input of the material's main
         node group. Outside the image (UVs beyond 0 to 1) the part colour shows.
+        With 'wrapU' (a cylindrical or spherical texture that goes all the way round) the image
+        repeats around, so it joins up seamlessly, but is still only drawn between V = 0 and 1.
         """
         main = None
         for node in nodes:
@@ -2352,6 +2450,39 @@ class BlenderMaterials:
         links.new(texture.outputs['Alpha'], factor.inputs[0])
         links.new(showPrint.outputs['Value'], factor.inputs[1])
         links.new(factor.outputs['Value'], mix.inputs['Fac'])
+
+        if wrapU:
+            texture.extension = 'REPEAT'
+
+            separate = nodes.new('ShaderNodeSeparateXYZ')
+            separate.location = (-560, 520)
+
+            aboveBottom = nodes.new('ShaderNodeMath')
+            aboveBottom.operation = 'GREATER_THAN'
+            aboveBottom.inputs[1].default_value = -1e-4
+            aboveBottom.location = (-360, 560)
+
+            belowTop = nodes.new('ShaderNodeMath')
+            belowTop.operation = 'LESS_THAN'
+            belowTop.inputs[1].default_value = 1.0 + 1e-4
+            belowTop.location = (-360, 480)
+
+            inside = nodes.new('ShaderNodeMath')
+            inside.operation = 'MULTIPLY'
+            inside.location = (-160, 520)
+
+            wrappedFactor = nodes.new('ShaderNodeMath')
+            wrappedFactor.operation = 'MULTIPLY'
+            wrappedFactor.location = (-160, 120)
+
+            links.new(uvMap.outputs['UV'], separate.inputs[0])
+            links.new(separate.outputs['Y'], aboveBottom.inputs[0])
+            links.new(separate.outputs['Y'], belowTop.inputs[0])
+            links.new(aboveBottom.outputs['Value'], inside.inputs[0])
+            links.new(belowTop.outputs['Value'], inside.inputs[1])
+            links.new(factor.outputs['Value'], wrappedFactor.inputs[0])
+            links.new(inside.outputs['Value'], wrappedFactor.inputs[1])
+            links.new(wrappedFactor.outputs['Value'], mix.inputs['Fac'])
 
     __imageCache = {}
 
@@ -2913,7 +3044,7 @@ class BlenderMaterials:
         if texmap is not None:
             image = BlenderMaterials.getTextureImage(texmap)
             if image is not None:
-                colourName = colourName + "_tex_" + os.path.splitext(image.name)[0]
+                colourName = colourName + "_tex_" + os.path.splitext(image.name)[0] + ("_wrap" if texmap.wrapU else "")
 
         # If it's already in the cache, use that
         if (colourName in BlenderMaterials.__material_list):
@@ -2939,7 +3070,7 @@ class BlenderMaterials:
 
         # Create new material
         col = BlenderMaterials.__getColourData(pureColourName)
-        material = BlenderMaterials.__createNodeBasedMaterial(blenderName, col, isSlopeMaterial, image)
+        material = BlenderMaterials.__createNodeBasedMaterial(blenderName, col, isSlopeMaterial, image, texmap is not None and texmap.wrapU)
 
         if material is None:
             printWarningOnce("Could not create material for blenderName {0}".format(blenderName))
