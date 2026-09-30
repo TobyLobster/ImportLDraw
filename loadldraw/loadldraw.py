@@ -229,6 +229,9 @@ globalObjectsToAdd = []         # Blender objects to add to the scene
 globalCamerasToAdd = []         # Camera data to add to the scene
 globalGroupObjects = {}         # LeoCAD group empties created this import, keyed by (parent object, group name)
 globalImportFilepath = ""       # The file being imported (embedded images may be written next to it)
+
+PRINT_NORMAL_ATTRIBUTE = "ldraw_print_normal"   # Face corner attribute: the normal of the textured face each corner belongs to
+PRINT_NORMAL_TOLERANCE_DEGREES = 2.0            # Textured faces are flat to within 1 degree; bevel strips turn by far more
 globalContext = None
 globalPoints = []
 globalScaleFactor = 0.0004
@@ -1571,11 +1574,19 @@ class LDrawNode:
         if Options.flattenHierarchy:
             isBON = self.file.isPart and not self.isSubPart
 
-        # Exception #2 - We are not a Blender Object if we are an LSynth part (so that all LSynth parts become a single mesh)
+        # Exception #2 - A subpart or primitive used directly by a model is part of the model's mesh, just as it
+        #                would be part of a part's mesh. (e.g. a model that builds a printed brick from
+        #                's/3005s01.dat', a brick without its front face, plus a textured front face of its own:
+        #                as one mesh, the edges where they meet are bevelled together.)
+        #                This matches what already happens when flattening the hierarchy.
+        if self.file.isSubPartOrPrimitive:
+            isBON = False
+
+        # Exception #3 - We are not a Blender Object if we are an LSynth part (so that all LSynth parts become a single mesh)
         if self.isLSynthPart:
             isBON = False
 
-        # Exception #3 - We are a Blender Object if we are a stud to be instanced
+        # Exception #4 - We are a Blender Object if we are a stud to be instanced
         if Options.instanceStuds and self.file.isStud:
             isBON = True
 
@@ -1867,8 +1878,10 @@ class LDrawFile:
         elif folder == "s" and parent == "parts":
             self.isPart = True
             self.isSubPart = True
+            self.isSubPartOrPrimitive = True
         elif folder == "p" or (folder in ("48", "8") and parent == "p"):
             self.isSubPart = True
+            self.isSubPartOrPrimitive = True
 
     def isStud(filename):
         """Is this file a stud?"""
@@ -1932,6 +1945,7 @@ class LDrawFile:
         self.childNodes       = []
         self.bfcCertified     = None
         self.isModel          = False
+        self.isSubPartOrPrimitive = False   # The file says (or its folder implies) it is a subpart or primitive
 
         isGrainySlopeAllowed = not self.isStud
 
@@ -2026,8 +2040,10 @@ class LDrawFile:
                         self.isPart = True
                     if 'subpart' in partType:
                         self.isSubPart = True
+                        self.isSubPartOrPrimitive = True
                     if 'primitive' in partType:
                         self.isSubPart = True
+                        self.isSubPartOrPrimitive = True
                     #if 'shortcut' in partType:
                     #    self.isPart = True
 
@@ -2267,9 +2283,75 @@ class BlenderMaterials:
         mix.location = (-260, 300)
 
         links.new(uvMap.outputs['UV'], texture.inputs['Vector'])
-        links.new(texture.outputs['Alpha'], mix.inputs['Fac'])
         links.new(texture.outputs['Color'], mix.inputs['Color2'])
         links.new(mix.outputs['Color'], main.inputs['Color'])
+
+        # The Bevel modifier rounds edges by adding strips of faces, which copy their material and
+        # texture coordinates from a neighbouring face. Next to a textured face that would wrap the
+        # edge of the print around the rounded edge. So only show the print where the surface
+        # faces the same way as the textured face it came from (see addPrintNormals).
+        printNormal = nodes.new('ShaderNodeAttribute')
+        printNormal.attribute_type = 'GEOMETRY'
+        printNormal.attribute_name = PRINT_NORMAL_ATTRIBUTE
+        printNormal.location = (-1160, 60)
+
+        geometry = nodes.new('ShaderNodeNewGeometry')
+        geometry.location = (-1360, -120)
+
+        toObject = nodes.new('ShaderNodeVectorTransform')
+        toObject.vector_type = 'NORMAL'
+        toObject.convert_from = 'WORLD'
+        toObject.convert_to = 'OBJECT'
+        toObject.location = (-1160, -120)
+
+        normalize = nodes.new('ShaderNodeVectorMath')
+        normalize.operation = 'NORMALIZE'
+        normalize.location = (-960, -120)
+
+        dot = nodes.new('ShaderNodeVectorMath')
+        dot.operation = 'DOT_PRODUCT'
+        dot.location = (-760, -40)
+
+        absDot = nodes.new('ShaderNodeMath')
+        absDot.operation = 'ABSOLUTE'
+        absDot.location = (-560, -40)
+
+        facingSameWay = nodes.new('ShaderNodeMath')
+        facingSameWay.operation = 'GREATER_THAN'
+        facingSameWay.inputs[1].default_value = math.cos(math.radians(PRINT_NORMAL_TOLERANCE_DEGREES))
+        facingSameWay.location = (-360, -40)
+
+        # Without the attribute (e.g. a mesh made some other way) the print is always shown
+        length = nodes.new('ShaderNodeVectorMath')
+        length.operation = 'LENGTH'
+        length.location = (-760, 120)
+
+        noAttribute = nodes.new('ShaderNodeMath')
+        noAttribute.operation = 'LESS_THAN'
+        noAttribute.inputs[1].default_value = 0.5
+        noAttribute.location = (-560, 120)
+
+        showPrint = nodes.new('ShaderNodeMath')
+        showPrint.operation = 'MAXIMUM'
+        showPrint.location = (-360, 120)
+
+        factor = nodes.new('ShaderNodeMath')
+        factor.operation = 'MULTIPLY'
+        factor.location = (-260, 120)
+
+        links.new(geometry.outputs['True Normal'], toObject.inputs['Vector'])
+        links.new(toObject.outputs['Vector'], normalize.inputs[0])
+        links.new(normalize.outputs['Vector'], dot.inputs[0])
+        links.new(printNormal.outputs['Vector'], dot.inputs[1])
+        links.new(dot.outputs['Value'], absDot.inputs[0])
+        links.new(absDot.outputs['Value'], facingSameWay.inputs[0])
+        links.new(printNormal.outputs['Vector'], length.inputs[0])
+        links.new(length.outputs['Value'], noAttribute.inputs[0])
+        links.new(facingSameWay.outputs['Value'], showPrint.inputs[0])
+        links.new(noAttribute.outputs['Value'], showPrint.inputs[1])
+        links.new(texture.outputs['Alpha'], factor.inputs[0])
+        links.new(showPrint.outputs['Value'], factor.inputs[1])
+        links.new(factor.outputs['Value'], mix.inputs['Fac'])
 
     __imageCache = {}
 
@@ -3871,6 +3953,29 @@ def addSharpEdges(bm, ob, geometry, filename):
         bm.edges.ensure_lookup_table()
 
 # **************************************************************************************
+def addPrintNormals(mesh):
+    """
+    Records, on each corner of each textured face, the normal of that face. Faces the Bevel
+    modifier adds copy it from a neighbouring face, so the material can tell a rounded edge
+    (whose own normal differs) from the textured face itself, and not draw the print there.
+    Call once the mesh is in its final shape.
+    """
+    if mesh.uv_layers.get("UVMap") is None:
+        return
+    if PRINT_NORMAL_ATTRIBUTE in mesh.attributes:
+        mesh.attributes.remove(mesh.attributes[PRINT_NORMAL_ATTRIBUTE])
+
+    isTextured = [material is not None and "_tex_" in material.name for material in mesh.materials]
+    normals = [0.0] * (3 * len(mesh.loops))
+    for polygon in mesh.polygons:
+        if polygon.material_index < len(isTextured) and isTextured[polygon.material_index]:
+            normal = polygon.normal
+            for loopIndex in polygon.loop_indices:
+                normals[3 * loopIndex:3 * loopIndex + 3] = normal
+    attribute = mesh.attributes.new(PRINT_NORMAL_ATTRIBUTE, 'FLOAT_VECTOR', 'CORNER')
+    attribute.data.foreach_set("vector", normals)
+
+# **************************************************************************************
 def meshIsReusable(meshName, geometry):
     meshExists = meshName in bpy.data.meshes
     #debugPrint("meshIsReusable says {0} exists = {1}.".format(meshName, meshExists))
@@ -4503,6 +4608,8 @@ def createBlenderObjectsFromNode(node,
                     (0.0,        0.0,        0.0,        1.0)
                 ))
                 mesh.transform(gapsScaleMatrix)
+
+            addPrintNormals(mesh)
 
             smoothShadingAndFreestyleEdges(ob)
 
