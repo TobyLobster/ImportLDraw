@@ -540,8 +540,8 @@ class Configure:
 
         # Search possible directories
         for dir in ldrawPossibleDirectories:
-            dir = os.path.expanduser(dir)
-            if os.path.isfile(os.path.join(dir, "LDConfig.ldr")):
+            dir = FileSystem.pathInsensitive(os.path.expanduser(dir))
+            if os.path.isfile(FileSystem.pathInsensitive(os.path.join(dir, "LDConfig.ldr"))):
                 result = dir
                 break
 
@@ -669,7 +669,7 @@ class LegoColours:
         else:
             configFilename = "LDConfig.ldr"
 
-        configFilepath = os.path.join(Configure.ldrawInstallDirectory, configFilename)
+        configFilepath = FileSystem.pathInsensitive(os.path.join(Configure.ldrawInstallDirectory, configFilename))
 
         ldconfig_lines = ""
         if os.path.exists(configFilepath):
@@ -1569,6 +1569,28 @@ class LDrawFile:
 
         return True
 
+    def __hasLDrawOrgLine(lines):
+        for line in lines or []:
+            parameters = line.split(None, 2)
+            if len(parameters) >= 2 and parameters[0] == "0" and parameters[1] == "!LDRAW_ORG":
+                return True
+        return False
+
+    def __setTypeFromLocation(self):
+        """Sets the file type (part, subpart or primitive) from the folder it is in, e.g. 'parts', 'parts/s' or 'p'."""
+        if not getattr(self, "fullFilepath", None) or not self.filename.lower().endswith(".dat"):
+            return
+        folders = os.path.normpath(os.path.dirname(self.fullFilepath)).lower().split(os.sep)
+        folder = folders[-1] if len(folders) > 0 else ""
+        parent = folders[-2] if len(folders) > 1 else ""
+        if folder == "parts":
+            self.isPart = True
+        elif folder == "s" and parent == "parts":
+            self.isPart = True
+            self.isSubPart = True
+        elif folder == "p" or (folder in ("48", "8") and parent == "p"):
+            self.isSubPart = True
+
     def isStud(filename):
         """Is this file a stud?"""
 
@@ -1641,6 +1663,12 @@ class LDrawFile:
         else:
             # We are loading a section of our parent document, so full filepath is that of the parent
             self.fullFilepath = parentFilepath
+
+        # Some libraries (notably Stud.io's 'UnOfficial' parts) have files without an '0 !LDRAW_ORG' line.
+        # Without it a part would be treated as a model, and each of its primitives would become a
+        # separate Blender object. So work out the type of file from where it is in the library instead.
+        if not LDrawFile.__hasLDrawOrgLine(self.lines):
+            self.__setTypeFromLocation()
 
         # BFC = Back face culling. The rules are arcane and complex, but at least
         #       it's kind of documented: http://www.ldraw.org/article/415.html
