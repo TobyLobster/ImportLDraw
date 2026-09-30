@@ -50,9 +50,27 @@ import tempfile
 from pprint import pprint
 
 # **************************************************************************************
+def getImportCollection():
+    """The collection that imported objects are added to"""
+    collection = bpy.context.collection
+    scene = bpy.context.scene
+    if collection == scene.collection:
+        # Objects linked directly to the scene's master collection can't be excluded from a
+        # view layer, and the instructions look relies on excluding them (solid and transparent
+        # bricks are rendered in separate view layers). So we use a child collection instead.
+        name = "LDraw Models"
+        collection = bpy.data.collections.get(name)
+        if collection is None:
+            collection = bpy.data.collections.new(name)
+        if scene.collection.children.find(collection.name) < 0:
+            scene.collection.children.link(collection)
+    return collection
+
+# **************************************************************************************
 def linkToScene(ob):
-    if bpy.context.collection.objects.find(ob.name) < 0:
-        bpy.context.collection.objects.link(ob)
+    collection = getImportCollection()
+    if collection.objects.find(ob.name) < 0:
+        collection.objects.link(ob)
 
 # **************************************************************************************
 def linkToCollection(collectionName, ob):
@@ -65,8 +83,9 @@ def linkToCollection(collectionName, ob):
 
 # **************************************************************************************
 def unlinkFromScene(ob):
-    if bpy.context.collection.objects.find(ob.name) >= 0:
-        bpy.context.collection.objects.unlink(ob)
+    for collection in (getImportCollection(), bpy.context.collection):
+        if collection.objects.find(ob.name) >= 0:
+            collection.objects.unlink(ob)
 
 # **************************************************************************************
 def selectObject(ob):
@@ -170,6 +189,7 @@ class Options:
     removeDefaultObjects = True         # Remove cube and lamp
     positionCamera = True               # Position the camera where so we get the whole object in shot
     cameraBorderPercent = 0.05          # Add a border gap around the positioned object (0.05 = 5%) for the rendered image
+    instructionsTransparentOpacity = 0.95    # Instructions look: opacity of transparent parts (0 = invisible, 1 = opaque) before the compositor's Set Alpha (0.75)
 
     def meshOptionsString():
         """These options change the mesh, so if they change, a new mesh needs to be cached"""
@@ -203,6 +223,7 @@ class Options:
 globalBrickCount = 0
 globalObjectsToAdd = []         # Blender objects to add to the scene
 globalCamerasToAdd = []         # Camera data to add to the scene
+globalGroupObjects = {}         # LeoCAD group empties created this import, keyed by (parent object, group name)
 globalContext = None
 globalPoints = []
 globalScaleFactor = 0.0004
@@ -1686,7 +1707,7 @@ class LDrawFile:
                 if parameters[1] == "!LEOCAD":
                     if parameters[2] == "GROUP":
                         if parameters[3] == "BEGIN":
-                            currentGroupNames.append(" ".join(parameters[4:]))
+                            currentGroupNames.append(" ".join(parameters[4:]).strip())
                         elif parameters[3] == "END":
                             currentGroupNames.pop(-1)
                     if parameters[2] == "CAMERA":
@@ -1854,12 +1875,31 @@ class BlenderMaterials:
             elif Options.curvedWalls and not Options.instructionsLook:
                 BlenderMaterials.__createCyclesConcaveWalls(nodes, links, 20 * globalScaleFactor)
 
+            BlenderMaterials.__linkUnconnectedNormals(nodes, links)
+
             material["Lego.isTransparent"] = isTransparent
             return material
 
         BlenderMaterials.__createCyclesBasic(nodes, links, (1.0, 1.0, 0.0, 1.0), 1.0, "")
         material["Lego.isTransparent"] = False
         return material
+
+    def __linkUnconnectedNormals(nodes, links):
+        """
+        Connects the surface normal to any node group 'Normal' input that is left unconnected.
+
+        Blender 5 passes the default value (0,0,0) of an unconnected group input through to the
+        nodes inside the group, rather than letting them use the surface normal as before. This
+        stops the Bump nodes inside the 'Slope Texture' and 'Concave Walls' groups from working.
+        (See https://github.com/TobyLobster/ImportLDraw/issues/117)
+        """
+        geometry = None
+        for node in list(nodes):
+            if node.type == 'GROUP' and 'Normal' in node.inputs and not node.inputs['Normal'].is_linked:
+                if geometry is None:
+                    geometry = nodes.new('ShaderNodeNewGeometry')
+                    geometry.location = (-400, -150)
+                links.new(geometry.outputs['Normal'], node.inputs['Normal'])
 
     def __nodeConcaveWalls(nodes, strength, x, y):
         node = nodes.new('ShaderNodeGroup')
@@ -2328,7 +2368,11 @@ class BlenderMaterials:
         # If the name already exists in Blender, use that
         if Options.overwriteExistingMaterials is False:
             if blenderName in bpy.data.materials:
-                return bpy.data.materials[blenderName]
+                material = bpy.data.materials[blenderName]
+                # Repair materials made by earlier versions (see __linkUnconnectedNormals)
+                if material.node_tree is not None:
+                    BlenderMaterials.__linkUnconnectedNormals(material.node_tree.nodes, material.node_tree.links)
+                return material
 
         # Create new material
         col = BlenderMaterials.__getColourData(pureColourName)
@@ -2751,7 +2795,8 @@ class BlenderMaterials:
             if Options.instructionsLook:
                 node_emission    = BlenderMaterials.__nodeEmission(group.nodes, 0, 0)
                 node_transparent = BlenderMaterials.__nodeTransparent(group.nodes, 0, 100)
-                node_mix1        = BlenderMaterials.__nodeMix(group.nodes, 0.5, 400, 100)
+                node_mix1        = BlenderMaterials.__nodeMix(group.nodes, Options.instructionsTransparentOpacity, 400, 100)
+                node_mix1.name   = "Opacity"
                 node_light       = BlenderMaterials.__nodeLightPath(group.nodes, 200, 400)
                 node_less        = BlenderMaterials.__nodeMath(group.nodes, 'LESS_THAN', 400, 400)
                 node_mix2        = BlenderMaterials.__nodeMix(group.nodes, 0.5, 600, 300)
@@ -2796,7 +2841,8 @@ class BlenderMaterials:
             if Options.instructionsLook:
                 node_emission    = BlenderMaterials.__nodeEmission(group.nodes, 0, 0)
                 node_transparent = BlenderMaterials.__nodeTransparent(group.nodes, 0, 100)
-                node_mix1        = BlenderMaterials.__nodeMix(group.nodes, 0.5, 400, 100)
+                node_mix1        = BlenderMaterials.__nodeMix(group.nodes, Options.instructionsTransparentOpacity, 400, 100)
+                node_mix1.name   = "Opacity"
                 node_light       = BlenderMaterials.__nodeLightPath(group.nodes, 200, 400)
                 node_less        = BlenderMaterials.__nodeMath(group.nodes, 'LESS_THAN', 400, 400)
                 node_mix2        = BlenderMaterials.__nodeMix(group.nodes, 0.5, 600, 300)
@@ -3241,9 +3287,21 @@ class BlenderMaterials:
         BlenderMaterials.__createBlenderLegoSpeckleNodeGroup()
         BlenderMaterials.__createBlenderLegoMilkyWhiteNodeGroup()
 
+        # The node groups may already exist (e.g. from a previous import), so make sure they use the current opacity
+        if Options.instructionsLook:
+            for name in ('Lego Transparent', 'Lego Transparent Fluorescent'):
+                group = bpy.data.node_groups.get(BlenderMaterials.__getGroupName(name))
+                if group is not None and "Opacity" in group.nodes:
+                    group.nodes["Opacity"].inputs['Fac'].default_value = Options.instructionsTransparentOpacity
+
 
 # **************************************************************************************
 def addSharpEdges(bm, ob, geometry, filename):
+    # Parts without any edge lines (e.g. balls, rubber belts, hose segments) have no sharp
+    # edges to add, but we still need to write back the welded vertices and fixed normals
+    if not geometry.edges:
+        bm.to_mesh(ob.data)
+
     if geometry.edges:
         global globalScaleFactor
         epsilon = 1 * globalScaleFactor
@@ -3415,15 +3473,16 @@ def addNodeToParentWithGroups(parentObject, groupNames, newObject):
             while len(groupName.encode("utf8")) > 63:
                 groupName = groupName[:-1]
 
-            # Check if we already have this node name, or if we need to create a new node
-            groupObj = None
-            for obj in bpy.data.objects:
-                if (obj.name == groupName):
-                    groupObj = obj
-            if (groupObj is None):
+            # Reuse the group node if we have already created it under this parent during this import.
+            # (Looking up by name alone would find a group node belonging to a different instance of
+            # the same submodel, or to a previous import.)
+            key = (parentObject.as_pointer() if parentObject is not None else 0, groupName)
+            groupObj = globalGroupObjects.get(key)
+            if groupObj is None:
                 groupObj = bpy.data.objects.new(groupName, None)
                 groupObj.parent = parentObject
                 globalObjectsToAdd.append(groupObj)
+                globalGroupObjects[key] = groupObj
             parentObject = groupObj
 
     newObject.parent = parentObject
@@ -3938,17 +3997,21 @@ def createBlenderObjectsFromNode(node,
         # debugPrint("NAME = {0}".format(name))
 
         # Add light to light bricks
-        if (name in globalLightBricks):
+        lightBrickName = name.lower()
+        if lightBrickName in globalLightBricks:
+            # The lamp's position, size and strength were set up for a realScale of 100, so scale them to match the model
+            lampScale = Options.realScale / 100.0
             lights = bpy.data.lights
             lamp_data = lights.new(name="LightLamp", type='POINT')
-            lamp_data.shadow_soft_size = 0.05
+            lamp_data.shadow_soft_size = 0.05 * lampScale
             lamp_data.use_nodes = True
             emission_node = lamp_data.node_tree.nodes.get('Emission')
             if emission_node:
-                emission_node.inputs['Color'].default_value = globalLightBricks[name]
-                emission_node.inputs['Strength'].default_value = 100.0
+                emission_node.inputs['Color'].default_value = globalLightBricks[lightBrickName]
+                # Light falls off with the square of distance, so the strength scales with the square of the size
+                emission_node.inputs['Strength'].default_value = 100.0 * lampScale * lampScale
             lamp_object = bpy.data.objects.new(name="LightLamp", object_data=lamp_data)
-            lamp_object.location = (-0.27, 0.0, -0.18)
+            lamp_object.location = (-0.27 * lampScale, 0.0, -0.18 * lampScale)
 
             addNodeToParentWithGroups(blenderNodeParent, [], lamp_object)
 
@@ -3965,16 +4028,8 @@ def createBlenderObjectsFromNode(node,
             bm.edges.ensure_lookup_table()
 
             # Remove doubles
-            # Note: This doesn't work properly with a low distance value
-            # So we scale up the vertices beforehand and scale them down afterwards
-            for v in bm.verts:
-                v.co = v.co * 1000
-
             if removeDoubles:
                 bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=globalWeldDistance)
-
-            for v in bm.verts:
-                v.co = v.co / 1000
 
             # Recalculate normals
             if recalculateNormals:
@@ -3998,7 +4053,9 @@ def createBlenderObjectsFromNode(node,
                 # Distance between gaps is controlled by Options.realGapWidth
                 # Gap height is set smaller than realGapWidth since empirically, stacked bricks tend
                 # to be pressed more tightly together
-                gapHeight = 0.33 * Options.realGapWidth
+                # Options.realGapWidth is a real life size, so scale it to match the model
+                gapWidth = Options.realGapWidth * Options.realScale
+                gapHeight = 0.33 * gapWidth
                 objScale = ob.scale
                 dim = ob.dimensions
 
@@ -4010,11 +4067,11 @@ def createBlenderObjectsFromNode(node,
                 # in every direction, creating a uniform gap.
                 scaleFac = mathutils.Vector( (1.0, 1.0, 1.0) )
                 if dim.x != 0:
-                    scaleFac.x = 1 - Options.realGapWidth * abs(objScale.x) / dim.x
+                    scaleFac.x = 1 - gapWidth  * abs(objScale.x) / dim.x
                 if dim.y != 0:
                     scaleFac.y = 1 - gapHeight            * abs(objScale.y) / dim.y
                 if dim.z != 0:
-                    scaleFac.z = 1 - Options.realGapWidth * abs(objScale.z) / dim.z
+                    scaleFac.z = 1 - gapWidth  * abs(objScale.z) / dim.z
 
                 # A safety net: Don't distort the part too much (e.g. -ve scale would not look good)
                 if scaleFac.x < 0.95:
@@ -4195,8 +4252,10 @@ def setupRealisticLook():
         if "Trans" in nodeNames:
            node_tree.nodes.remove(node_tree.nodes["Trans"])
 
-        if "Z Combine" in nodeNames:
-            node_tree.nodes.remove(node_tree.nodes["Z Combine"])
+        # (Blender 5 names this node "Depth Combine" by default)
+        for zCombineName in ("Z Combine", "Depth Combine"):
+            if zCombineName in nodeNames:
+                node_tree.nodes.remove(node_tree.nodes[zCombineName])
 
         # Set up standard link from Render Layers to Composite
         if "Render Layers" in nodeNames:
@@ -4235,10 +4294,9 @@ def createCollection(scene, name):
 def ensure_output_color_socket(node_tree, name="Result"):
     iface = node_tree.interface
 
-    # items_tree holds the sockets/panels as sequence of (name, item) tuples
-    for key, item in iface.items_tree:
-        # item is the socket object for sockets
-        if getattr(item, "name", None) == name and getattr(item, "in_out", None) == 'OUTPUT':
+    # items_tree holds the sockets and panels of the interface
+    for item in iface.items_tree:
+        if getattr(item, "item_type", None) == 'SOCKET' and item.name == name and item.in_out == 'OUTPUT':
             return item
 
     # not found — create and return new socket
@@ -4431,10 +4489,11 @@ def setupInstructionsLook():
             transLayer.name = "Trans"
         transLayer.layer = 'TransparentBricks'
 
-        if "Z Combine" in node_tree.nodes:
-            zCombine = node_tree.nodes["Z Combine"]
-        else:
+        # Reuse our existing node if present (Blender 5 names this node "Depth Combine" by default)
+        zCombine = node_tree.nodes.get("Z Combine") or node_tree.nodes.get("Depth Combine")
+        if zCombine is None:
             zCombine = node_tree.nodes.new('CompositorNodeZcombine')
+            zCombine.name = "Z Combine"
 
         if hasattr(zCombine, "use_alpha"):
             zCombine.use_alpha = True
@@ -4678,8 +4737,13 @@ def loadFromFile(context, filename, isFullFilepath=True):
     # to 1.0. By changing the 'Unit Scale' after import the size of
     # everything in the scene can be adjusted.
 
+    global globalWeldDistance
+
     globalScaleFactor = 0.0004 * Options.realScale
-    globalWeldDistance = 0.01 * globalScaleFactor
+
+    # Vertices closer than this are merged. 0.00125 LDraw units is the distance previously used at
+    # realScale 1.0, but now it scales with the model so welding works the same at any scale.
+    globalWeldDistance = 0.00125 * globalScaleFactor
 
     globalCamerasToAdd = []
     globalContext = context
@@ -4743,8 +4807,11 @@ def loadFromFile(context, filename, isFullFilepath=True):
     global globalObjectsToAdd
     global globalPoints
 
+    global globalGroupObjects
+
     globalBrickCount = 0
     globalObjectsToAdd = []
+    globalGroupObjects = {}
     globalPoints = []
 
     debugPrint("Creating NodeGroups")
@@ -4755,8 +4822,10 @@ def loadFromFile(context, filename, isFullFilepath=True):
     rootOb = createBlenderObjectsFromNode(node, node.matrix, name)
 
     if not node.file.isModel:
-        if rootOb.data:
-            rootOb.data.transform(Math.rotationMatrix)
+        # Fix top level rotation from LDraw coordinate space to Blender coordinate space.
+        # We rotate the object rather than its mesh, since the mesh can be shared with other
+        # objects (e.g. from a previous import) and must stay in LDraw orientation.
+        rootOb.matrix_local = Math.rotationMatrix @ rootOb.matrix_local
 
     scene  = bpy.context.scene
     camera = scene.camera
