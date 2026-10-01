@@ -248,6 +248,7 @@ globalCamerasToAdd = []         # Camera data to add to the scene
 globalGroupObjects = {}         # LeoCAD group empties created this import, keyed by (parent object, group name)
 globalCurrentCollection = None  # With Options.submodelCollections: the collection for objects being created now
 globalHiddenObjects = []        # Objects of pieces LeoCAD marked as hidden (hidden once they are in the scene)
+globalObjectParts = {}          # Object pointer -> (bare part number, category) of the objects created this import (for minifig rigging)
 globalObjectCollections = {}    # With Options.submodelCollections: object pointer -> the collection it belongs in
 globalImportFilepath = ""       # The file being imported (embedded images may be written next to it)
 
@@ -2297,6 +2298,7 @@ class LDrawFile:
         self.isModel          = False
         self.isSubPartOrPrimitive = False   # The file says (or its folder implies) it is a subpart or primitive
         self.isShortcut       = False       # A library shortcut (an assembly of parts, e.g. 3829c01)
+        self.category         = None        # From '0 !CATEGORY <category>' (e.g. 'Minifig Headwear')
 
         isGrainySlopeAllowed = not self.isStud
 
@@ -2427,6 +2429,9 @@ class LDrawFile:
                 if parameters[1] == "!LDCAD":
                     if parameters[2] == "GENERATED":
                         processingLSynthParts = True
+                if parameters[1] == "!CATEGORY" and self.category is None:
+                    self.category = " ".join(word for word in parameters[2:] if word) or None
+
                 if parameters[1] == "!LEOCAD":
                     if parameters[2] == "PIECE" and "HIDDEN" in parameters[3:]:
                         leocadPieceHidden = True
@@ -4464,26 +4469,18 @@ def addNodeToParentWithGroups(parentObject, groupNames, newObject):
 
 
 # **************************************************************************************
-parent = None
-attach_points = []
-children = []
-partsHierarchy = {}
-macro_name = None
-macros = {}
+partsHierarchy = {}     # Parent part number -> (list of attach points, set of child part numbers and 'category:' entries)
 
 # **************************************************************************************
 def parseParentsFile(file):
-    global parent
-    global attach_points
-    global children
-    global partsHierarchy
-    global macro_name
-    global macros
-
+    """
+    Reads parents.txt (see the description at the top of that file).
+    Returns {parent part number: (list of attach points, set of children)}, where children are part
+    numbers, or 'category:<category in lower case>' for a 'Category <category>' line.
+    """
     # See https://stackoverflow.com/a/53870514
-    number_pattern = "[+-]?((\d+(\.\d*)?)|(\.\d+))"
-    pattern = "(" + number_pattern + ")(.*)"
-    compiled = re.compile(pattern)
+    number_pattern = r"[+-]?((\d+(\.\d*)?)|(\.\d+))"
+    compiled = re.compile("(" + number_pattern + r")(\s+|$)(.*)")
 
     def number_split(s):
         match = compiled.match(s)
@@ -4492,218 +4489,182 @@ def parseParentsFile(file):
         groups = match.groups()
         return groups[0], groups[-1].strip()
 
-    parent = None
-    attach_points = []
-    children = []
-    partsHierarchy = {}
-    macro_name = None
-    macros = {}
+    hierarchy = {}
+    groups = {}
+    name = None             # current parent part number or group name
+    isGroup = False
+    attachPoints = []
+    children = set()
 
-    def finishParent():
-        global parent
-        global attach_points
-        global children
-        global partsHierarchy
-        global macro_name
+    def finish():
+        if name is None:
+            return
+        if isGroup:
+            groups[name] = children
+        else:
+            hierarchy[name] = (attachPoints, children)
 
-        if macro_name:
-            macros[macro_name] = children
-            # print("Adding macro ", macro_name)
-            parent = None
-            attach_points = []
-            children = []
-            macro_name = None
+    with open(file, encoding="utf-8", errors="replace") as f:
+        lines = f.readlines()
 
-        if parent:
-            partsHierarchy[parent] = (attach_points, children)
-            parent = None
-            attach_points = []
-            children = []
-            macro_name = None
+    for lineNumber, line in enumerate(lines, 1):
+        line = line.split("#")[0].strip()
+        if not line:
+            continue
 
-    with open(file) as f:
-        lines = f.readlines() # list containing lines of file
+        def warn(problem):
+            printWarningOnce("parents.txt line {0}: {1} '{2}' (ignoring this line)".format(lineNumber, problem, line))
 
-        line_number = 0
-        for line in lines:
-            line_number += 1
-            line = line.strip() # remove leading/trailing white spaces
-            line = line.split("#")[0]
-            if line:
-                line = line.strip()
-                original_line = line
-                if line.startswith("Group "):
-                    # Found group definition
-                    finishParent()
-                    macro_name = line[6:].strip().strip(":")
-                    # print("Found group definition ", macro_name)
-                    continue
-                if line.startswith("Parent "):
-                    # Found parent definition
-                    finishParent()
-                    parent = line[7:].strip().strip(":")
-                    # print("Found parent definition ", parent)
-                    continue
-                if line in macros:
-                    # found instance of a macro
-                    # add children to definition
-                    children += macros[line]
-                    continue
+        if line.startswith("Group ") or line.startswith("Parent "):
+            finish()
+            isGroup = line.startswith("Group ")
+            name = line.split(None, 1)[1].strip().strip(":").strip()
+            attachPoints = []
+            children = set()
+            continue
 
-                # check for three floating point numbers of an attach point
-                number1, line = number_split(line)
-                if number1:
-                    number3 = None
-                    number2, line = number_split(line)
-                    if number2:
-                        number3, line = number_split(line)
-                    if number3:
-                        # Got three numbers for an attach point
-                        try:
-                            attachPoint = (float(number1), float(number2), float(number3))
-                        except:
-                            attachPoint = None
-                        if attachPoint:
-                            # Attach point
-                            attach_points.append(attachPoint)
-                            continue
-                        else:
-                            debugPrint("ERROR: Bad attach point found on line %d" % (line_number,))
-                            partsHierarchy = None
-                            return
+        if name is None:
+            warn("Expected 'Parent' or 'Group' before")
+            continue
 
-                # child part number?
-                children.append(original_line)
+        if line in groups:
+            # Use of a group: add its children
+            children |= groups[line]
+            continue
 
-    finishParent()
-    # print("Macros:")
-    # pprint(macros)
-    # print("End of Macros")
-    return
+        if line.startswith("Category "):
+            # Any part with this '0 !CATEGORY' (e.g. 'Minifig Headwear')
+            children.add("category:" + line.split(None, 1)[1].strip().lower())
+            continue
+
+        # An attach point is three numbers
+        numbers = []
+        rest = line
+        while len(numbers) < 4:
+            number, rest = number_split(rest)
+            if number is None:
+                break
+            numbers.append(number)
+
+        if len(numbers) == 1 and not rest:
+            # A child part number
+            children.add(line)
+        elif len(numbers) == 3 and not rest:
+            if isGroup:
+                warn("Groups can't have attach points")
+            else:
+                attachPoints.append(tuple(float(n) for n in numbers))
+        elif not numbers and len(line.split()) == 1:
+            # A child part number such as 'u9210', or the name of a group
+            if line[:1].isupper() and not re.match(r"[A-Za-z]?\d", line):
+                warn("Unknown group")
+            else:
+                children.add(line)
+        else:
+            warn("Expected an attach point (three numbers), a part number, a group or 'Category <category>'")
+
+    finish()
+    return hierarchy
+
+
+# **************************************************************************************
+def barePartNumber(filename):
+    """The part number without any pattern, assembly or other suffix e.g. '3626' for '3626bp01.dat', 'u9210' for 'u9210.dat'"""
+    basename = os.path.basename(filename.replace("\\", "/"))
+    # Parts embedded in an official model's MPD are named like '60390 - 973p0o.dat'
+    if " - " in basename:
+        basename = basename.split(" - ", 1)[1]
+    m = re.match(r"([A-Za-z]?\d+)($|\D)", basename)
+    return m.group(1) if m else ""
 
 
 # **************************************************************************************
 def setupImplicitParents():
+    """
+    Rigs minifigs: parts that are attached to other parts (e.g. the head to the torso, hair to the head) become
+    children of them, using the parents and attach points in parents.txt.
+    Only the objects created by this import are considered.
+    """
     global globalScaleFactor
+    global partsHierarchy
 
     if not Options.minifigHierarchy:
         return
 
-    parseParentsFile(Options.scriptDirectory + '/parents.txt')
-    # print(partsHierarchy)
+    partsHierarchy = parseParentsFile(os.path.join(Options.scriptDirectory, 'parents.txt'))
     if not partsHierarchy:
         return
 
     bpy.context.view_layer.update()
 
-    # create a set of the parent parts and a set of child parts from the partsHierarchy
-    parentParts = set()
     childParts = set()
-    for parent, childrenData in partsHierarchy.items():
-        parentParts.add(parent)
-        childParts.update(childrenData[1])
+    for attachPoints, children in partsHierarchy.values():
+        childParts |= children
 
-    # create a flat set of all interesting parts (parents and children together)
-    interestingParts = set()
-    interestingParts.update(parentParts)
-    interestingParts.update(childParts)
+    def childKeys(partInfo):
+        """The ways the children lists can refer to a part: its part number, and its category"""
+        partNumber, category = partInfo
+        keys = [partNumber]
+        if category:
+            keys.append("category:" + category.lower())
+        return keys
 
-    # print('Parent parts: %s' % (parentParts,))
-    # print('Child parts: %s' % (childParts,))
-    # print('Interesting parts: %s' % (interestingParts,))
+    # The parents and possible children among the objects of this import
+    parentObjects = []
+    childObjects = []
+    for obj in globalObjectsToAdd:
+        if obj.type != 'MESH':
+            continue
+        partInfo = globalObjectParts.get(obj.as_pointer())
+        if partInfo is None:
+            continue
+        if partInfo[0] in partsHierarchy:
+            parentObjects.append((obj, partInfo[0]))
+        if any(key in childParts for key in childKeys(partInfo)):
+            childObjects.append((obj, childKeys(partInfo)))
+
+    if not parentObjects or not childObjects:
+        return
 
     tolerance = globalScaleFactor * 5 # in LDraw units
     squaredTolerance = tolerance * tolerance
-    # print(" Squared tolerance: %s" % (squaredTolerance,))
 
-    # For each interesting mesh in the scene, remember the bare part number and the children
-    parentMeshParts = {}        # bare part numbers of the parents
-    childMeshParts = {}         # bare part numbers of the children
-    parentableMeshes = {}       # interesting children
-    lego_part_pattern = "([A-Za-z]?\d+)($|\D)"
-
-    # for each object in the scene
-    for obj in bpy.data.objects:
-        if obj.type != 'MESH':
+    # For each child, find the closest attach point of a parent that accepts it
+    bestParent = {}     # child object pointer -> (squared distance, parent object, child object)
+    for obj, partNumber in parentObjects:
+        attachPoints, children = partsHierarchy[partNumber]
+        slotLocations = [obj.matrix_world @ (mathutils.Vector(slot) * globalScaleFactor) for slot in attachPoints]
+        if not slotLocations:
             continue
 
-        name = obj.data.name
-        if not name.startswith('Mesh_'):
-            continue
-
-        # skip 'Mesh_' and get part of name that is just digits (possibly with a letter in front)
-        test_name = name[5:]
-        if " - " in test_name:
-            test_name = test_name.split(" - ",1)[1]
-
-        partName = ''
-        m = re.match(lego_part_pattern, test_name)
-        if m:
-            partName = m.group(1)
-
-        # For each interesting parent mesh in the scene, remember the bare part number and the children
-        if partName in parentParts:
-            # remember the bare part number for each interesting mesh in the scene
-            parentMeshParts[name] = partName
-
-            # remember possible children of the mesh in the scene
-            children = partsHierarchy.get(partName)
-            if children:
-                parentableMeshes[name] = children
-
-        # For each interesting child mesh in the scene, remember the bare part number
-        if partName in childParts:
-            # remember the bare part number for each interesting mesh in the scene
-            childMeshParts[name] = partName
-
-    # Now, iterate through the objects in the scene and gather the interesting ones
-    parentObjects = []
-    childObjects = []
-    for obj in bpy.data.objects:
-        if obj.type != 'MESH':
-            continue
-        meshName = obj.data.name
-        if meshName in parentMeshParts:
-            parentObjects.append(obj)
-            # print("Possible parent object %s has matrix %s" % (obj.name, obj.matrix_world))
-        if meshName in childMeshParts:
-            childObjects.append(obj)
-
-    # for each interesting parent object
-    for obj in parentObjects:
-        meshName = obj.data.name
-        childrenData = parentableMeshes.get(meshName)
-        if not childrenData:
-            continue
-        # parentLocation = obj.matrix_world @ mathutils.Vector((0, 0, 0))
-        # parentMatrixInverted = obj.matrix_world.inverted()
-        # print("Looking for children of %s (at %s)" % (obj.name, parentLocation))
-
-        slotLocations = []
-        for slot in childrenData[0]:
-            loc = obj.matrix_world @ (mathutils.Vector(slot) * globalScaleFactor)
-            slotLocations.append(loc)
-        # print(" Slot locations: %s" % (slotLocations,))
-
-        # for each interesting child object
-        for childObj in childObjects:
-            childMeshName = childObj.data.name
-            childPartName = childMeshParts[childMeshName]
-            if childPartName not in childrenData[1]:
+        for childObj, keys in childObjects:
+            if childObj == obj or not any(key in children for key in keys):
                 continue
             childLocation = childObj.matrix_world.to_translation()
-            # print("  Found possible child %s" % (childObj.name,))
-            for slotLocation in slotLocations:
-                # print("  Slot location:%s   Child Location:%s" % (slotLocation, childLocation))
-                diff = slotLocation - childLocation
-                squaredDistance = diff.length_squared
-                # print("  location: %s (squared distance: %s)" % (childLocation, squaredDistance))
-                if squaredDistance <= squaredTolerance:
-                    temp = childObj.matrix_world
-                    childObj.parent = obj
-                    # childObj.matrix_parent_inverse = parentMatrixInverted
-                    childObj.matrix_world = temp
-                    # print("    Got it! Parent '%s' now has child '%s'" % (obj.name, childObj.name))
+            squaredDistance = min((slotLocation - childLocation).length_squared for slotLocation in slotLocations)
+            if squaredDistance <= squaredTolerance:
+                best = bestParent.get(childObj.as_pointer())
+                if best is None or squaredDistance < best[0]:
+                    bestParent[childObj.as_pointer()] = (squaredDistance, obj, childObj)
+
+    # Parent them (closest first), never making a loop of parents
+    newParents = {}
+    for squaredDistance, obj, childObj in sorted(bestParent.values(), key=lambda entry: entry[0]):
+        ancestor = obj
+        while ancestor is not None and ancestor != childObj:
+            ancestor = newParents.get(ancestor.as_pointer(), ancestor.parent)
+        if ancestor == childObj:
+            continue
+        newParents[childObj.as_pointer()] = obj
+
+    for squaredDistance, obj, childObj in bestParent.values():
+        if newParents.get(childObj.as_pointer()) == obj:
+            # Keep the child exactly where it is, by setting the parent inverse matrix (as Ctrl+P does), rather
+            # than setting matrix_world, which loses any shear in the LDraw matrices and slightly turns the part
+            oldParentMatrix = childObj.parent.matrix_world.copy() if childObj.parent else mathutils.Matrix.Identity(4)
+            parentInverse = obj.matrix_world.inverted_safe() @ oldParentMatrix @ childObj.matrix_parent_inverse
+            childObj.parent = obj
+            childObj.matrix_parent_inverse = parentInverse
 
 # **************************************************************************************
 def slopeAnglesForPart(partName):
@@ -4949,6 +4910,10 @@ def createBlenderObjectsFromNode(node,
         # Add any (LeoCAD) group nodes as parents of 'ob' (the new node), and as children of 'blenderNodeParent'.
         # Also add all objects to 'globalObjectsToAdd'.
         addNodeToParentWithGroups(blenderNodeParent, node.groupNames, ob)
+
+        # Remember which part this is, for rigging minifigs (see setupImplicitParents)
+        if Options.minifigHierarchy and not node.file.isModel:
+            globalObjectParts[ob.as_pointer()] = (barePartNumber(name), node.file.category)
 
         # Submodels as collections: the model's object, and everything inside it, go in a new collection
         if Options.submodelCollections and node.file.isModel and not node.file.isShortcut and not Options.flattenHierarchy:
@@ -5778,6 +5743,8 @@ def loadFromFile(context, filename, isFullFilepath=True):
     globalObjectCollections = {}
     global globalHiddenObjects
     globalHiddenObjects = []
+    global globalObjectParts
+    globalObjectParts = {}
     globalPoints = []
 
     debugPrint("Creating NodeGroups")

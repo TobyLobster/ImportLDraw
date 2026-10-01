@@ -36,6 +36,14 @@
 # Groups are used by specifying the <name of group> among the list of child part
 # numbers.
 #
+# Children can also be given by their LDraw category, for any part whose file has
+# that '0 !CATEGORY' line. This covers new parts without having to list them:
+#
+#   Category <LDraw category, e.g. Minifig Headwear>
+#
+# A child is attached to the parent with the nearest attach point (within 5 LDraw
+# units) among the parents that accept it.
+#
 # How to get attach points
 # ------------------------
 #
@@ -310,11 +318,11 @@ Parent 973: # Torso
     84637                       # Minifig Hips and Legs with Wooden Leg Right
 
 Parent 975: # right arm
-    -22 16.1213 20.8787         # TODO: check?
+    -22.2 21.009 -10.52         # hand attach point (the end of the wrist hole)
     977                         # Minifig Hand
     3820                        # Minifig Hand
 Parent 976: # left arm
-    22 16.1213 20.8787          # TODO: check?
+    22.2 21.009 -10.52          # hand attach point (the end of the wrist hole)
     977                         # Minifig Hand
     3820                        # Minifig Hand
 
@@ -326,6 +334,7 @@ Parent 3626: # head
     MinifigHelmets
     MinifigHats
     MinifigCaps
+    Category Minifig Headwear   # any hair, hat, helmet etc. (including ones not listed above)
 
     6158                        # Minifig Fire Helmet Breathing Hose
     15553                       # Minifig Headdress Batgirl
@@ -417,6 +426,7 @@ Parent 82359: # skeleton head
     MinifigHelmets
     MinifigHats
     MinifigCaps
+    Category Minifig Headwear   # any hair, hat, helmet etc. (including ones not listed above)
 
     6158                        # Minifig Fire Helmet Breathing Hose
     15553                       # Minifig Headdress Batgirl
@@ -430,7 +440,7 @@ Parent 25128: # Minifig Baby
 # Friends figures
 #
 ##############################################################################
-Group FriendsTorsoChildren
+Group FriendsTorsoChildren:
     92198                       # Figure Friends Head
     92240                       # Figure Friends Male Head
     92244                       # Figure Friends Female Left Arm
