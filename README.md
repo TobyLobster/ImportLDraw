@@ -34,6 +34,7 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 + **Concave walls** - Optionally look as if each brick has very slightly concave walls (with the photorealistic renderer), which affects the look of light reflections.
 + **Light bricks** - Bricks that emit light are supported.
 + **Parenting Minifigs** - Optionally make the parts of a minifig parented to each other, so e.g. rotating an arm also moves the hand with it.
++ **Submodels as collections** - Optionally give each submodel its own collection, nested like the submodels, so whole submodels can be shown or hidden, or used with geometry nodes.
 + **Fast** - even large models can be imported in seconds.
 
 ![Ghostbusters](./images/ghostbusters_960.png)

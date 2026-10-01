@@ -169,6 +169,7 @@ class Options:
     importCameras      = True           # LeoCAD can specify cameras within the ldraw file format. Choose to load them or ignore them.
     positionObjectOnGroundAtOrigin = True   # Centre the object at the origin, sitting on the z=0 plane
     flattenHierarchy   = False          # All parts are under the root object - no sub-models
+    submodelCollections = False         # Each submodel (and the model itself) also gets its own collection, nested like the submodels
     minifigHierarchy   = True           # Parts of minifigs are automatically parented to each other in a hierarchy
     flattenGroups      = False          # All LEOCad groups are ignored - no groups
     usePrincipledShaderWhenAvailable = True  # Use the new principled shader
@@ -245,6 +246,8 @@ globalObjectsToAdd = []         # Blender objects to add to the scene
 globalMissingFiles = []         # Files referenced by the import that could not be found
 globalCamerasToAdd = []         # Camera data to add to the scene
 globalGroupObjects = {}         # LeoCAD group empties created this import, keyed by (parent object, group name)
+globalCurrentCollection = None  # With Options.submodelCollections: the collection for objects being created now
+globalObjectCollections = {}    # With Options.submodelCollections: object pointer -> the collection it belongs in
 globalImportFilepath = ""       # The file being imported (embedded images may be written next to it)
 
 PRINT_NORMAL_ATTRIBUTE = "ldraw_print_normal"   # Face corner attribute: the normal of the textured face each corner belongs to
@@ -2291,6 +2294,7 @@ class LDrawFile:
         self.bfcCertified     = None
         self.isModel          = False
         self.isSubPartOrPrimitive = False   # The file says (or its folder implies) it is a subpart or primitive
+        self.isShortcut       = False       # A library shortcut (an assembly of parts, e.g. 3829c01)
 
         isGrainySlopeAllowed = not self.isStud
 
@@ -2389,6 +2393,8 @@ class LDrawFile:
                     if 'primitive' in partType:
                         self.isSubPart = True
                         self.isSubPartOrPrimitive = True
+                    if 'shortcut' in partType:
+                        self.isShortcut = True
                     #if 'shortcut' in partType:
                     #    self.isPart = True
 
@@ -4406,7 +4412,21 @@ def meshIsReusable(meshName, geometry):
     return False
 
 # **************************************************************************************
+def createSubmodelCollection(name, parentCollection):
+    """A new collection for a submodel, inside its parent's collection (Options.submodelCollections)"""
+    title = os.path.splitext(os.path.basename(name.replace("\\", "/")))[0] or name
+    # Blender names are limited to 63 bytes when encoded as UTF-8
+    while len(title.encode("utf8")) > 63:
+        title = title[:-1]
+    collection = bpy.data.collections.new(title)
+    if parentCollection is None:
+        parentCollection = getImportCollection()
+    parentCollection.children.link(collection)
+    return collection
+
+# **************************************************************************************
 def addNodeToParentWithGroups(parentObject, groupNames, newObject):
+    firstNewObject = len(globalObjectsToAdd)
 
     if not Options.flattenGroups:
         # Create groups as needed
@@ -4429,6 +4449,11 @@ def addNodeToParentWithGroups(parentObject, groupNames, newObject):
 
     newObject.parent = parentObject
     globalObjectsToAdd.append(newObject)
+
+    # Remember the submodel collection for the new objects (they are linked at the end of the import)
+    if globalCurrentCollection is not None:
+        for ob in globalObjectsToAdd[firstNewObject:]:
+            globalObjectCollections[ob.as_pointer()] = globalCurrentCollection
 
 
 # **************************************************************************************
@@ -4875,9 +4900,11 @@ def createBlenderObjectsFromNode(node,
     global globalObjectsToAdd
     global globalWeldDistance
     global globalPoints
+    global globalCurrentCollection
 
     realColourName = realColourName or Options.defaultColour
     ob = None
+    previousCollection = globalCurrentCollection
 
     if node.isBlenderObjectNode():
         ourColourName = LDrawNode.resolveColour(node.colourName, realColourName)
@@ -4912,6 +4939,11 @@ def createBlenderObjectsFromNode(node,
         # Add any (LeoCAD) group nodes as parents of 'ob' (the new node), and as children of 'blenderNodeParent'.
         # Also add all objects to 'globalObjectsToAdd'.
         addNodeToParentWithGroups(blenderNodeParent, node.groupNames, ob)
+
+        # Submodels as collections: the model's object, and everything inside it, go in a new collection
+        if Options.submodelCollections and node.file.isModel and not node.file.isShortcut and not Options.flattenHierarchy:
+            globalCurrentCollection = createSubmodelCollection(name, previousCollection)
+            globalObjectCollections[ob.as_pointer()] = globalCurrentCollection
 
         # Node to which our children will be attached
         blenderNodeParent = ob
@@ -5050,6 +5082,7 @@ def createBlenderObjectsFromNode(node,
 
         createBlenderObjectsFromNode(childNode, childNode.matrix, childNode.filename, childColourName, blenderParentTransform, localToWorldSpaceMatrix @ localMatrix, blenderNodeParent, childTexmap)
 
+    globalCurrentCollection = previousCollection
     return ob
 
 # **************************************************************************************
@@ -5720,10 +5753,14 @@ def loadFromFile(context, filename, isFullFilepath=True):
     global globalPoints
 
     global globalGroupObjects
+    global globalCurrentCollection
+    global globalObjectCollections
 
     globalBrickCount = 0
     globalObjectsToAdd = []
     globalGroupObjects = {}
+    globalCurrentCollection = None
+    globalObjectCollections = {}
     globalPoints = []
 
     debugPrint("Creating NodeGroups")
@@ -5880,7 +5917,11 @@ def loadFromFile(context, filename, isFullFilepath=True):
     # Finally add each object to the scene
     debugPrint("Adding {0} objects to scene".format(len(globalObjectsToAdd)))
     for ob in globalObjectsToAdd:
-        linkToScene(ob)
+        collection = globalObjectCollections.get(ob.as_pointer())
+        if collection is None:
+            linkToScene(ob)
+        elif collection.objects.find(ob.name) < 0:
+            collection.objects.link(ob)
 
     # Parent only once everything has been added to the scene, otherwise the matrix_world's are
     # sometimes not updated properly - some are erroneously still the identity matrix.

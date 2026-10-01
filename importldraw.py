@@ -229,6 +229,12 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         default=prefs.get("flattenHierarchy", False)
     )
 
+    submodelCollections: BoolProperty(
+        name="Submodels as collections",
+        description="Each submodel also gets its own collection, nested in the same way as the submodels, so you can hide or show a whole submodel, or use it in geometry nodes. (In the instructions look, bricks are also in the 'Solid' and 'Transparent' collections used for rendering, so hiding a submodel collection hides it in the viewport but not in the render)",
+        default=prefs.get("submodelCollections", False)
+    )
+
     minifigHierarchy: BoolProperty(
         name="Parent Minifigs",
         description="Add a parent/child hierarchy (tree) for Minifigs",
@@ -344,6 +350,9 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         box.prop(self, "positionOnGround")
         box.prop(self, "numberNodes")
         box.prop(self, "flatten")
+        row = box.row()
+        row.enabled = not self.flatten
+        row.prop(self, "submodelCollections")
         box.prop(self, "minifigHierarchy")
 
         box.label(text="Resolve Ambiguous Normals:", icon='ORIENTATION_NORMAL')
@@ -370,6 +379,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("numberNodes",           self.numberNodes)
         ImportLDrawOps.prefs.set("positionObjectOnGroundAtOrigin", self.positionOnGround)
         ImportLDrawOps.prefs.set("flattenHierarchy",      self.flatten)
+        ImportLDrawOps.prefs.set("submodelCollections",   self.submodelCollections)
         ImportLDrawOps.prefs.set("minifigHierarchy",      self.minifigHierarchy)
         ImportLDrawOps.prefs.set("useUnofficialParts",    self.useUnofficialParts)
         ImportLDrawOps.prefs.set("useTextures",           self.useTextures)
@@ -401,6 +411,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.Options.importCameras              = self.importCameras
         loadldraw.Options.positionObjectOnGroundAtOrigin = self.positionOnGround
         loadldraw.Options.flattenHierarchy           = self.flatten
+        loadldraw.Options.submodelCollections        = self.submodelCollections
         loadldraw.Options.minifigHierarchy           = self.minifigHierarchy
         loadldraw.Options.useTextures                = self.useTextures
         loadldraw.Options.packEmbeddedImages         = self.packEmbeddedImages
