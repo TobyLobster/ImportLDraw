@@ -5746,6 +5746,13 @@ def loadFromFile(context, filename, isFullFilepath=True):
                 ShowMessageBox(message + ". The import may be incomplete.", "Import LDraw", 'ERROR')
         else:
             printError(message + ". Nothing could be imported; the library may be too old for this file.")
+    elif not any(ob.type == 'MESH' for ob in globalObjectsToAdd):
+        # Nothing went wrong, but there is nothing to see
+        message = ("'{0}' has no parts or other geometry in it, so nothing visible was imported. "
+                   "(Only the first model in a multi-part (.mpd) file is imported, with the parts and submodels it uses.)").format(os.path.basename(filename))
+        printWarningOnce(message)
+        if globalContext is None:
+            ShowMessageBox(message, "Import LDraw", 'ERROR')
 
     if not node.file.isModel:
         # Fix top level rotation from LDraw coordinate space to Blender coordinate space.
