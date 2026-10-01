@@ -458,20 +458,21 @@ class Configure:
     unofficialSearchPaths = []
     warningSuppression = {}
     tempDir = None
+    unofficialDirectory = ""        # The unofficial parts: a folder (usually '<ldraw>/unofficial') or 'ldrawunf.zip'
 
     def appendLocalPath(path):
         path = FileSystem.pathInsensitive(path)
-        if os.path.exists(path):
+        if FileSystem.exists(path):
             Configure.localSearchPaths.append(path)
 
     def appendOfficialPath(path):
         path = FileSystem.pathInsensitive(path)
-        if os.path.exists(path):
+        if FileSystem.exists(path):
             Configure.officialSearchPaths.append(path)
 
     def appendUnofficialPath(path):
         path = FileSystem.pathInsensitive(path)
-        if os.path.exists(path):
+        if FileSystem.exists(path):
             Configure.unofficialSearchPaths.append(path)
 
     def __setSearchPaths():
@@ -505,11 +506,11 @@ class Configure:
         # Search unofficial parts
         if Options.useUnofficialParts:
             if Options.resolution == "High":
-                Configure.appendUnofficialPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "p", "48"))
+                Configure.appendUnofficialPath(os.path.join(Configure.unofficialDirectory, "p", "48"))
             elif Options.resolution == "Low":
-                Configure.appendUnofficialPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "p", "8"))
-            Configure.appendUnofficialPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "p"))
-            Configure.appendUnofficialPath(os.path.join(Configure.ldrawInstallDirectory, "unofficial", "parts"))
+                Configure.appendUnofficialPath(os.path.join(Configure.unofficialDirectory, "p", "8"))
+            Configure.appendUnofficialPath(os.path.join(Configure.unofficialDirectory, "p"))
+            Configure.appendUnofficialPath(os.path.join(Configure.unofficialDirectory, "parts"))
 
         # Search LSynth parts
         if Options.useLSynthParts:
@@ -565,20 +566,67 @@ class Configure:
                                             "/usr/local/share/ldraw",
                                        ]
 
-        # Search possible directories
+        # Search possible directories (an unzipped library, or a folder with the zipped library in it)
         for dir in ldrawPossibleDirectories:
             dir = FileSystem.pathInsensitive(os.path.expanduser(dir))
             if os.path.isfile(FileSystem.pathInsensitive(os.path.join(dir, "LDConfig.ldr"))):
                 result = dir
                 break
+            if os.path.isfile(FileSystem.pathInsensitive(os.path.join(dir, "complete.zip"))):
+                result = dir
+                break
 
         return result
+
+    def __findZipLibraries(directory):
+        """
+        The parts library can also be used still zipped, as downloaded from ldraw.org:
+        'directory' can be the 'complete.zip' file itself, or a folder containing it (when the folder
+        doesn't have an unzipped library in it). Returns the library directory to use.
+        """
+        if directory.lower().endswith(".zip"):
+            # Opening the zip indexes it, so the paths inside it are recognised from now on
+            if not ZipLibrary.isLibrary(directory):
+                message = "Could not read the LDraw parts library zip file '{0}'".format(directory)
+                if message not in Configure.warningSuppression:
+                    Configure.warningSuppression[message] = True
+                    printError(message)
+            return directory
+
+        if not os.path.isfile(FileSystem.pathInsensitive(os.path.join(directory, "LDConfig.ldr"))):
+            zipPath = FileSystem.pathInsensitive(os.path.join(directory, "complete.zip"))
+            if os.path.isfile(zipPath) and ZipLibrary.isLibrary(zipPath):
+                return zipPath
+        return directory
+
+    def __findUnofficialDirectory():
+        """
+        The unofficial parts: an 'unofficial' folder in the library, or failing that the zipped
+        'ldrawunf.zip' from ldraw.org, in the library folder or next to 'complete.zip'.
+        """
+        folder = FileSystem.pathInsensitive(os.path.join(Configure.ldrawInstallDirectory, "unofficial"))
+        if FileSystem.exists(folder):
+            return folder
+
+        if ZipLibrary.contains(Configure.ldrawInstallDirectory):
+            places = [os.path.dirname(Configure.ldrawInstallDirectory)]
+        else:
+            places = [Configure.ldrawInstallDirectory, folder]
+        for place in places:
+            zipPath = FileSystem.pathInsensitive(os.path.join(place, "ldrawunf.zip"))
+            if os.path.isfile(zipPath) and ZipLibrary.isLibrary(zipPath):
+                return zipPath
+        return folder
 
     def setLDrawDirectory():
         if Options.ldrawDirectory == "":
             Configure.ldrawInstallDirectory = Configure.findDefaultLDrawDirectory()
         else:
             Configure.ldrawInstallDirectory = os.path.expanduser(Options.ldrawDirectory)
+
+        if Configure.ldrawInstallDirectory != "":
+            Configure.ldrawInstallDirectory = Configure.__findZipLibraries(Configure.ldrawInstallDirectory)
+            Configure.unofficialDirectory = Configure.__findUnofficialDirectory()
 
         debugPrint("The LDraw Parts Library path to be used is: {0}".format(Configure.ldrawInstallDirectory))
         Configure.__setSearchPaths()
@@ -777,9 +825,8 @@ class LegoColours:
         configFilepath = FileSystem.pathInsensitive(os.path.join(Configure.ldrawInstallDirectory, configFilename))
 
         ldconfig_lines = ""
-        if os.path.exists(configFilepath):
-            with open(configFilepath, "rt", encoding="utf_8") as ldconfig:
-                ldconfig_lines = ldconfig.readlines()
+        if FileSystem.exists(configFilepath):
+            ldconfig_lines = FileSystem.readTextFile(configFilepath) or ""
 
         for line in ldconfig_lines:
             if len(line) > 3:
@@ -999,10 +1046,140 @@ class LegoColours:
 
 # **************************************************************************************
 # **************************************************************************************
+class ZipLibrary:
+    """
+    An LDraw parts library read straight from its zip file, without unzipping it: the official
+    'complete.zip' (whose files are in an 'ldraw' folder) or the unofficial 'ldrawunf.zip' (whose
+    'parts' and 'p' folders are at the top level).
+
+    The zip file's path is treated like a folder: the file 'ldraw/parts/3001.dat' in
+    '/x/complete.zip' has the path '/x/complete.zip/parts/3001.dat'. So the rest of the importer
+    can use these paths like any others, through FileSystem.
+    """
+
+    __archives = {}     # zip filepath -> archive details (see __open)
+
+    def __open(zipPath):
+        """Opens and indexes a zip file, or returns the details from last time if it is unchanged"""
+        try:
+            stat = os.stat(zipPath)
+        except OSError:
+            return None
+        stamp = (stat.st_mtime, stat.st_size)
+        archive = ZipLibrary.__archives.get(zipPath)
+        if archive is not None and archive["stamp"] == stamp:
+            return archive
+
+        try:
+            zipFile = zipfile.ZipFile(zipPath)
+            names = zipFile.namelist()
+        except (OSError, zipfile.BadZipFile):
+            return None
+
+        # Use the 'ldraw' folder as the top of the library, if there is one
+        prefix = ""
+        lowerNames = [name.lower() for name in names]
+        if "ldraw/ldconfig.ldr" in lowerNames or any(name.startswith("ldraw/parts/") for name in lowerNames):
+            prefix = "ldraw/"
+
+        files = {}          # lowercase path in the library -> name in the zip
+        folders = set()     # lowercase paths of folders in the library
+        for name, lowerName in zip(names, lowerNames):
+            if name.endswith("/") or not lowerName.startswith(prefix):
+                continue
+            relative = lowerName[len(prefix):]
+            files[relative] = name
+            parts = relative.split("/")
+            for i in range(1, len(parts)):
+                folders.add("/".join(parts[:i]))
+
+        archive = {"stamp": stamp, "zip": zipFile, "prefix": prefix, "files": files, "folders": folders}
+        ZipLibrary.__archives[zipPath] = archive
+        debugPrint("Opened parts library {0} ({1} files)".format(zipPath, len(files)))
+        return archive
+
+    def isLibrary(zipPath):
+        """Is this a zip file we can read a parts library from?"""
+        return zipPath.lower().endswith(".zip") and os.path.isfile(zipPath) and ZipLibrary.__open(zipPath) is not None
+
+    def __find(path):
+        """Splits a path into (archive, zip filepath, lowercase path inside the library), or None if it isn't in an opened zip"""
+        for zipPath in ZipLibrary.__archives:
+            if path == zipPath:
+                return (ZipLibrary.__archives[zipPath], zipPath, "")
+            if path.startswith(zipPath) and path[len(zipPath)] in ("/", "\\"):
+                inner = path[len(zipPath) + 1:].replace("\\", "/").lower()
+                inner = "/".join(part for part in inner.split("/") if part not in ("", "."))
+                return (ZipLibrary.__archives[zipPath], zipPath, inner)
+        return None
+
+    def contains(path):
+        return ZipLibrary.__find(path) is not None
+
+    def exists(path):
+        found = ZipLibrary.__find(path)
+        if found is None:
+            return False
+        archive, zipPath, inner = found
+        return inner == "" or inner in archive["files"] or inner in archive["folders"]
+
+    def isFile(path):
+        found = ZipLibrary.__find(path)
+        return found is not None and found[2] in found[0]["files"]
+
+    def canonical(path):
+        """The path with the capitalisation used in the zip file (or unchanged if it isn't there)"""
+        found = ZipLibrary.__find(path)
+        if found is None:
+            return path
+        archive, zipPath, inner = found
+        name = archive["files"].get(inner)
+        if name is None:
+            return path
+        return os.path.join(zipPath, *name[len(archive["prefix"]):].split("/"))
+
+    def read(path):
+        """The bytes of a file in a zip, or None"""
+        found = ZipLibrary.__find(path)
+        if found is None:
+            return None
+        archive, zipPath, inner = found
+        name = archive["files"].get(inner)
+        if name is None:
+            return None
+        try:
+            return archive["zip"].read(name)
+        except (OSError, zipfile.BadZipFile, KeyError):
+            return None
+
+
+# **************************************************************************************
+# **************************************************************************************
 class FileSystem:
     """
     Reads text files in different encodings. Locates full filepath for a part.
+    Files can be in a folder or in a zipped parts library (see ZipLibrary).
     """
+
+    def exists(path):
+        """Does the file or folder exist (on disk or in a zipped parts library)?"""
+        if ZipLibrary.contains(path):
+            return ZipLibrary.exists(path)
+        return os.path.exists(path)
+
+    def isFile(path):
+        if ZipLibrary.contains(path):
+            return ZipLibrary.isFile(path)
+        return os.path.isfile(path)
+
+    def readBytes(path):
+        if ZipLibrary.contains(path):
+            return ZipLibrary.read(path)
+        try:
+            with open(path, "rb") as file:
+                return file.read()
+        except OSError:
+            return None
 
     # Takes a case-insensitive filepath and constructs a case sensitive version (based on an actual existing file)
     # See https://stackoverflow.com/questions/8462449/python-case-insensitive-file-name/8462613#8462613
@@ -1028,6 +1205,8 @@ class FileSystem:
         "/HOME/Chris/I HOPE this doesn't exist"
         """
 
+        if ZipLibrary.contains(path):
+            return ZipLibrary.canonical(path)
         return FileSystem.__pathInsensitive(path) or path
 
     def __pathInsensitive(path):
@@ -1102,6 +1281,23 @@ class FileSystem:
 
         filepath = FileSystem.pathInsensitive(filepath)
 
+        if ZipLibrary.contains(filepath):
+            data = ZipLibrary.read(filepath)
+            if data is None:
+                return None
+            if data.startswith(b"\xfe\xff\x00"):
+                encoding = "utf_16_be"
+            elif data.startswith(b"\xff\xfe0"):
+                encoding = "utf_16_le"
+            else:
+                encoding = "utf_8"
+            try:
+                text = data.decode(encoding)
+            except UnicodeDecodeError:
+                text = data.decode("latin_1")
+            # As reading a file in text mode would: universal newlines, keeping the line endings
+            return text.replace("\r\n", "\n").replace("\r", "\n").splitlines(True)
+
         lines = None
         if os.path.exists(filepath):
             # Try to read using the suspected encoding
@@ -1137,7 +1333,7 @@ class FileSystem:
             fullPathName = os.path.join(path, partName)
             fullPathName = FileSystem.pathInsensitive(fullPathName)
 
-            if os.path.exists(fullPathName):
+            if FileSystem.exists(fullPathName):
                 return fullPathName
 
         return None
@@ -1879,26 +2075,39 @@ class LDrawFile:
                 return False
             filepath = result
 
-        if os.path.splitext(filepath)[1] == ".io":
-            # Check if the file is encrypted (password protected)
-            is_encrypted = False
-            zf = zipfile.ZipFile(filepath)
-            for zinfo in zf.infolist():
-                is_encrypted |= zinfo.flag_bits & 0x1
-            if is_encrypted:
-                ShowMessageBox("Oops, this .io file is password protected", "Password protected files are not supported", 'ERROR')
-                return False
+        if os.path.splitext(filepath)[1].lower() == ".io":
+            ioFilepath = filepath
+            if os.path.isdir(filepath):
+                # A Stud.io file that has already been unzipped into a folder of the same name
+                # (e.g. by double clicking it on a Mac). Use its files where they are.
+                directory_to_extract_to = filepath
+            else:
+                # Check if the file is encrypted (password protected)
+                is_encrypted = False
+                try:
+                    zf = zipfile.ZipFile(filepath)
+                except zipfile.BadZipFile:
+                    printError("'{0}' is not a Stud.io file that can be read (it isn't a zip file)".format(filepath))
+                    return False
+                for zinfo in zf.infolist():
+                    is_encrypted |= zinfo.flag_bits & 0x1
+                if is_encrypted:
+                    ShowMessageBox("Oops, this .io file is password protected", "Password protected files are not supported", 'ERROR')
+                    return False
 
-            # Get a temporary directory. Store the TemporaryDirectory object in Configure so it's scope lasts long enough
-            Configure.tempDir = tempfile.TemporaryDirectory()
-            directory_to_extract_to = Configure.tempDir.name
+                # Get a temporary directory. Store the TemporaryDirectory object in Configure so it's scope lasts long enough
+                Configure.tempDir = tempfile.TemporaryDirectory()
+                directory_to_extract_to = Configure.tempDir.name
 
-            # Decompress to temporary directory
-            with zipfile.ZipFile(filepath, 'r') as zip_ref:
-                zip_ref.extractall(directory_to_extract_to)
+                # Decompress to temporary directory
+                with zipfile.ZipFile(filepath, 'r') as zip_ref:
+                    zip_ref.extractall(directory_to_extract_to)
 
             # It's the 'model.ldr' file we want to use
             filepath = os.path.join(directory_to_extract_to, "model.ldr")
+            if not os.path.isfile(filepath):
+                printError("The Stud.io file '{0}' has no model.ldr in it".format(ioFilepath))
+                return False
 
             # Add the subdirectories of the directory to the search paths, notably 'CustomParts' and it's subdirectories
 
@@ -2572,6 +2781,19 @@ class BlenderMaterials:
             candidate = "{0}_{1}{2}".format(stem, attempt, extension)
         return None
 
+    def __packedImage(baseName, data):
+        """An image packed into the .blend from the given bytes, reusing one from an earlier import of the same bytes"""
+        digest = hashlib.sha1(data).hexdigest()
+        for image in bpy.data.images:
+            if image.get("LDraw.embeddedHash") == digest and image.packed_file is not None:
+                return image
+        image = bpy.data.images.new(baseName, 1, 1)
+        image.source = 'FILE'
+        image.filepath_raw = "//textures/" + baseName
+        image.pack(data=data, data_len=len(data))
+        image["LDraw.embeddedHash"] = digest
+        return image
+
     def __embeddedImage(name, data, sourceFilepath):
         """Creates (or reuses) a Blender image for an image embedded in a '0 !DATA' section"""
         digest = hashlib.sha1(data).hexdigest()
@@ -2626,6 +2848,17 @@ class BlenderMaterials:
         # The spec says: look for 'textures/<name>' along the search path first, then '<name>'
         for candidate in (("textures/" + texmap.imageName, texmap.imageName) if image is None else ()):
             filepath = FileSystem.locate(candidate, rootPath)
+            if filepath is not None and ZipLibrary.contains(filepath):
+                # In a zipped parts library: pack the image into the .blend from memory
+                data = ZipLibrary.read(filepath)
+                if data:
+                    try:
+                        image = BlenderMaterials.__packedImage(os.path.basename(filepath), data)
+                    except RuntimeError:
+                        image = None
+                    if image is not None:
+                        break
+                continue
             if filepath is not None and os.path.isfile(filepath):
                 try:
                     image = bpy.data.images.load(filepath, check_existing=True)

@@ -64,8 +64,9 @@ Blender 4.2 and above:
 **Setting the LDraw Parts Library directory**
 
 + Download the latest complete [LDraw Parts Library](https://library.ldraw.org/updates?latest) and unzip it to a directory e.g. called 'ldraw'.
++ (Or leave it zipped: *Import LDraw* can read the parts straight from the downloaded *complete.zip*. Use the folder containing *complete.zip* as the LDraw Parts Library directory, or the path of the zip file itself.)
 + (Note there currently seems to be an issue if the path to the ldraw directory contains spaces, so avoid using spaces in the full path to the ldraw directory.).
-+ OPTIONAL: Download the unofficial parts and unzip it to sub-directory 'ldraw/unofficial/'
++ OPTIONAL: Download the unofficial parts and unzip it to sub-directory 'ldraw/unofficial/' (or put the zipped *ldrawunf.zip* in the 'ldraw' directory, or next to *complete.zip*)
 + From the Blender menu click: File > Import > LDraw (.mpd/.ldr/.l3b/.dat).
 + In the bottom left of Blender's window, there's a panel of *Import Options*.
 + The first option is the LDraw Parts Library directory. Type the full filepath to the 'ldraw' directory you unzipped to.

@@ -127,7 +127,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
 
     ldrawPath: StringProperty(
         name="",
-        description="Full filepath to the LDraw Parts Library (download from http://www.ldraw.org)",
+        description="Full filepath to the LDraw Parts Library folder (download from https://library.ldraw.org). It can also be the zipped library, complete.zip, or a folder containing it. An 'ldrawunf.zip' of unofficial parts is used too if it is next to complete.zip",
         default=prefs.get("ldrawDirectory", loadldraw.Configure.findDefaultLDrawDirectory())
     )
 
