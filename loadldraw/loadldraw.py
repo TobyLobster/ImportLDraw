@@ -247,6 +247,7 @@ globalMissingFiles = []         # Files referenced by the import that could not 
 globalCamerasToAdd = []         # Camera data to add to the scene
 globalGroupObjects = {}         # LeoCAD group empties created this import, keyed by (parent object, group name)
 globalCurrentCollection = None  # With Options.submodelCollections: the collection for objects being created now
+globalHiddenObjects = []        # Objects of pieces LeoCAD marked as hidden (hidden once they are in the scene)
 globalObjectCollections = {}    # With Options.submodelCollections: object pointer -> the collection it belongs in
 globalImportFilepath = ""       # The file being imported (embedded images may be written next to it)
 
@@ -1852,6 +1853,7 @@ class LDrawNode:
         self.isRootNode     = isRootNode
         self.groupNames     = groupNames.copy()
         self.texmap         = None      # Texture active on the type 1 line that references this node
+        self.hidden         = False     # LeoCAD marked this piece as hidden ('0 !LEOCAD PIECE HIDDEN')
 
     def look_at(obj_camera, target, up_vector):
         bpy.context.view_layer.update()
@@ -2321,6 +2323,7 @@ class LDrawFile:
         camera = LDrawCamera()
 
         currentGroupNames = []
+        leocadPieceHidden = False
 
         # Texture mapping state (!TEXMAP). Each stack entry is [TexMap, inFallback].
         textureStack = []
@@ -2425,6 +2428,8 @@ class LDrawFile:
                     if parameters[2] == "GENERATED":
                         processingLSynthParts = True
                 if parameters[1] == "!LEOCAD":
+                    if parameters[2] == "PIECE" and "HIDDEN" in parameters[3:]:
+                        leocadPieceHidden = True
                     if parameters[2] == "GROUP":
                         if parameters[3] == "BEGIN":
                             currentGroupNames.append(" ".join(parameters[4:]).strip())
@@ -2493,9 +2498,11 @@ class LDrawFile:
                     if new_filename != "":
                         newNode = LDrawNode(new_filename, False, self.fullFilepath, new_colourName, localMatrix, canCullChildNode, bfcInvertNext, processingLSynthParts, not self.isModel, False, currentGroupNames)
                         newNode.texmap = currentTexture
+                        newNode.hidden = leocadPieceHidden
                         self.childNodes.append(newNode)
                     else:
                         printWarningOnce("In file '{0}', the line '{1}' is not formatted corectly (ignoring).".format(self.fullFilepath, line))
+                    leocadPieceHidden = False
 
                 # Parse an edge
                 elif parameters[0] == "2":
@@ -4889,9 +4896,11 @@ def createBlenderObjectsFromNode(node,
                                  blenderParentTransform=Math.identityMatrix,
                                  localToWorldSpaceMatrix=Math.identityMatrix,
                                  blenderNodeParent=None,
-                                 texmap=None):
+                                 texmap=None,
+                                 hidden=False):
     """
     Creates a Blender Object for the node given and (recursively) for all it's children as required.
+    'hidden' is True inside a piece (e.g. a submodel) that LeoCAD marked as hidden.
     Creates and optimises the mesh for each object too.
     'texmap' is a texture from further up the hierarchy that applies to this node, in the node's coordinates.
     """
@@ -4905,6 +4914,7 @@ def createBlenderObjectsFromNode(node,
     realColourName = realColourName or Options.defaultColour
     ob = None
     previousCollection = globalCurrentCollection
+    hidden = hidden or node.hidden
 
     if node.isBlenderObjectNode():
         ourColourName = LDrawNode.resolveColour(node.colourName, realColourName)
@@ -5051,7 +5061,12 @@ def createBlenderObjectsFromNode(node,
 
         # Keep track of all vertices in global space, for positioning the camera and/or root object at the end
         # Notice that we do this after scaling for Options.gaps
-        if Options.positionObjectOnGroundAtOrigin or Options.positionCamera:
+        # Hidden pieces are hidden in the viewport and in renders (once in the scene)
+        if hidden:
+            globalHiddenObjects.append(ob)
+
+        # (Hidden pieces don't count when placing the model on the ground or framing the camera)
+        if (Options.positionObjectOnGroundAtOrigin or Options.positionCamera) and not hidden:
             if mesh and mesh.vertices:
                 localTransform = localToWorldSpaceMatrix @ localMatrix
                 points = [localTransform @ p.co for p in mesh.vertices]
@@ -5080,7 +5095,7 @@ def createBlenderObjectsFromNode(node,
         if childTexmap is not None:
             childTexmap = childTexmap.transformed(childNode.matrix)
 
-        createBlenderObjectsFromNode(childNode, childNode.matrix, childNode.filename, childColourName, blenderParentTransform, localToWorldSpaceMatrix @ localMatrix, blenderNodeParent, childTexmap)
+        createBlenderObjectsFromNode(childNode, childNode.matrix, childNode.filename, childColourName, blenderParentTransform, localToWorldSpaceMatrix @ localMatrix, blenderNodeParent, childTexmap, hidden)
 
     globalCurrentCollection = previousCollection
     return ob
@@ -5761,6 +5776,8 @@ def loadFromFile(context, filename, isFullFilepath=True):
     globalGroupObjects = {}
     globalCurrentCollection = None
     globalObjectCollections = {}
+    global globalHiddenObjects
+    globalHiddenObjects = []
     globalPoints = []
 
     debugPrint("Creating NodeGroups")
@@ -5922,6 +5939,14 @@ def loadFromFile(context, filename, isFullFilepath=True):
             linkToScene(ob)
         elif collection.objects.find(ob.name) < 0:
             collection.objects.link(ob)
+
+    # Pieces hidden in LeoCAD: hidden in the viewport (the eye in the Outliner) and in renders
+    for ob in globalHiddenObjects:
+        ob.hide_render = True
+        try:
+            ob.hide_set(True)
+        except RuntimeError:
+            ob.hide_viewport = True
 
     # Parent only once everything has been added to the scene, otherwise the matrix_world's are
     # sometimes not updated properly - some are erroneously still the identity matrix.
