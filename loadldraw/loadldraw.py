@@ -144,7 +144,9 @@ def ShowMessageBox(message = "", title = "Message Box", icon = 'INFO'):
 
 # **************************************************************************************
 # **************************************************************************************
-MESH_FORMAT_VERSION = 2     # 2 = texture coordinates and print normals (version 1.3.0)
+MESH_FORMAT_VERSION = 3     # 2 = texture coordinates and print normals (version 1.3.0)
+                            # 3 = sharp edges found along edge lines that span several mesh edges, T-junctions
+                            #     joined up, and a bevel weight for each edge so its bevel can't overlap (issue #29)
 
 class Options:
     """User Options"""
@@ -161,10 +163,11 @@ class Options:
     useColourScheme    = "lgeo"         # "ldraw", "alt", or "lgeo". LGEO gives the most true-to-life colours.
     numberNodes        = True           # Each node's name has a numerical prefix eg. 00001_car.dat (keeps nodes listed in a fixed order)
     removeDoubles      = True           # Remove duplicate vertices (recommended)
+    joinTJunctions     = True           # Join faces that meet along an edge at different vertices (a 'T-junction'), so the mesh is closed there and can be bevelled (needs removeDoubles)
     smoothShading      = True           # Smooth the surface normals (recommended)
     edgeSplit          = True           # Edge split modifier (recommended if you use smoothShading)
     gaps               = True           # Introduces a tiny space between each brick
-    realGapWidth       = 0.0002         # Width of gap between bricks (in metres)
+    realGapWidth       = 0.0001         # Width of gap between bricks (in metres)
     curvedWalls        = True           # Manipulate normals to make surfaces look slightly concave
     importCameras      = True           # LeoCAD can specify cameras within the ldraw file format. Choose to load them or ignore them.
     positionObjectOnGroundAtOrigin = True   # Centre the object at the origin, sitting on the z=0 plane
@@ -222,6 +225,7 @@ class Options:
                          str(Options.createInstances),
                          str(Options.useColourScheme),
                          str(Options.removeDoubles),
+                         str(Options.joinTJunctions),
                          str(Options.smoothShading),
                          str(Options.gaps),
                          str(Options.realGapWidth),
@@ -4254,7 +4258,397 @@ class BlenderMaterials:
 
 
 # **************************************************************************************
-def addSharpEdges(bm, ob, geometry, filename):
+def joinStraightLines(lines, tolerance):
+    """
+    Edge lines that carry straight on from each other (they share an end point and point in opposite directions
+    from it) are joined into one longer line. Returns just the joined lines.
+    """
+    def key(co):
+        return (round(co.x / tolerance), round(co.y / tolerance), round(co.z / tolerance))
+
+    # Union-find over the lines
+    group = list(range(len(lines)))
+    def find(i):
+        while group[i] != i:
+            group[i] = group[group[i]]
+            i = group[i]
+        return i
+
+    # The lines that end at each point, with the direction going away from that point
+    ends = {}
+    for i, (a, b) in enumerate(lines):
+        direction = b - a
+        if direction.length <= tolerance:
+            continue
+        direction.normalize()
+        ends.setdefault(key(a), []).append((i, direction))
+        ends.setdefault(key(b), []).append((i, -direction))
+
+    joined = False
+    for lineEnds in ends.values():
+        for (i, d1), (j, d2) in itertools.combinations(lineEnds, 2):
+            if d1.dot(d2) < -0.99999:
+                group[find(i)] = find(j)
+                joined = True
+    if not joined:
+        return []
+
+    # Each group of joined lines becomes one line, between the furthest points at each end
+    members = {}
+    for i in range(len(lines)):
+        members.setdefault(find(i), []).append(i)
+
+    result = []
+    for indices in members.values():
+        if len(indices) < 2:
+            continue
+        origin = lines[indices[0]][0]
+        direction = (lines[indices[0]][1] - origin).normalized()
+        points = [p for i in indices for p in lines[i]]
+        distances = [(p - origin).dot(direction) for p in points]
+        result.append((points[distances.index(min(distances))], points[distances.index(max(distances))]))
+    return result
+
+
+# **************************************************************************************
+def edgesAlongLines(bm, kd, lines, tolerance):
+    """
+    Returns the indices of the mesh edges that lie along an edge line, including where the faces split the line
+    into several mesh edges (issue #29). A mesh edge whose two vertices are both on a line segment lies along it.
+    """
+    result = set()
+    for p0, p1 in lines + joinStraightLines(lines, tolerance * 0.1):
+        direction = p1 - p0
+        length = direction.length
+        if length <= tolerance:
+            continue
+        direction /= length
+
+        # The vertices on the line segment (searching the sphere around the line)
+        onLine = set()
+        for co, index, dist in kd.find_range((p0 + p1) * 0.5, length * 0.5 + tolerance):
+            t = (co - p0).dot(direction)
+            if -tolerance <= t <= length + tolerance and (co - p0 - direction * t).length <= tolerance:
+                onLine.add(index)
+
+        if len(onLine) > 1:
+            for index in onLine:
+                vert = bm.verts[index]
+                for meshEdge in vert.link_edges:
+                    if meshEdge.other_vert(vert).index in onLine:
+                        result.add(meshEdge.index)
+    return result
+
+
+# **************************************************************************************
+def verticesOnLines(bm, lines, tolerance):
+    """For each edge line, the mesh vertices on it: {vertex index: distance along the line}"""
+    bm.verts.ensure_lookup_table()
+    bm.verts.index_update()
+
+    kd = mathutils.kdtree.KDTree(len(bm.verts))
+    for i, v in enumerate(bm.verts):
+        kd.insert(v.co, i)
+    kd.balance()
+
+    result = []
+    for p0, p1 in lines + joinStraightLines(lines, tolerance * 0.1):
+        direction = p1 - p0
+        length = direction.length
+        if length <= tolerance:
+            continue
+        direction /= length
+
+        onLine = {}
+        for co, index, dist in kd.find_range((p0 + p1) * 0.5, length * 0.5 + tolerance):
+            t = (co - p0).dot(direction)
+            if -tolerance <= t <= length + tolerance and (co - p0 - direction * t).length <= tolerance:
+                onLine[index] = t
+        if len(onLine) > 1:
+            result.append(onLine)
+    return result
+
+
+# **************************************************************************************
+def joinTJunctionsAlongLines(bm, lines, tolerance):
+    """
+    Along a line (an edge line, or an open edge of the mesh), the faces on one side often have more vertices than
+    the faces on the other side, e.g. a long side face meets the row of faces around a hole. The vertices in the
+    middle of the long edge are 'T-junctions': the faces don't share an edge there, so the mesh is open. The Bevel
+    modifier can't round an open edge, and bevelling the edges nearby opens a crack between the faces.
+    This joins the two sides up, so the faces on both sides share the same edges. Only open edges are changed.
+    Returns the number of vertices joined.
+    """
+    def openEdgesAlongLine(vert, onLine):
+        """The open edges from 'vert' that run along the line"""
+        return [e for e in vert.link_edges if len(e.link_faces) == 1 and e.other_vert(vert).index in onLine]
+
+    def intoFace(edge):
+        """The direction from an open edge into its face (in the plane of the face, at right angles to the edge)"""
+        face = edge.link_faces[0]
+        along = (edge.verts[1].co - edge.verts[0].co).normalized()
+        towards = face.calc_center_median() - edge.verts[0].co
+        return (towards - along * towards.dot(along)).normalized(), face.normal
+
+    def stacked(edge1, edge2):
+        """True when the faces of two open edges lie on top of each other (e.g. a sticker on a surface), rather
+        than meeting at the line. Those must not be joined, or welding would merge or remove faces"""
+        into1, normal1 = intoFace(edge1)
+        into2, normal2 = intoFace(edge2)
+        return abs(normal1.dot(normal2)) > 0.99 and into1.dot(into2) > 0.5
+
+    def canJoin(edges1, edges2):
+        return edges1 and edges2 and not any(stacked(e1, e2) for e1 in edges1 for e2 in edges2)
+
+    # 1. Where the two sides almost meet at a vertex, but not quite (two vertices on the line closer than the
+    #    tolerance, both at the end of open edges along the line), weld them together. Otherwise the tiny edge
+    #    between them limits the width of every bevel on the part (the Bevel modifier's 'Clamp Overlap')
+    group = {}
+    def find(v):
+        while group.get(v, v) != v:
+            v = group[v]
+        return v
+
+    for onLine in verticesOnLines(bm, lines, tolerance):
+        positions = sorted((t, index) for index, t in onLine.items())
+        for (ta, a), (tb, b) in zip(positions, positions[1:]):
+            if tb - ta >= tolerance:
+                continue
+            va, vb = bm.verts[a], bm.verts[b]
+            if not canJoin(openEdgesAlongLine(va, onLine), openEdgesAlongLine(vb, onLine)):
+                continue
+            # (vertices of the same face are only welded when they are the two ends of an edge)
+            if set(va.link_faces) & set(vb.link_faces) and not any(e.other_vert(va) == vb for e in va.link_edges):
+                continue
+            ra, rb = find(va), find(vb)
+            if ra != rb:
+                group[rb] = ra
+
+    targetMap = {v: find(v) for v in group if find(v) != v}
+    joined = len(targetMap)
+    if targetMap:
+        bmesh.ops.weld_verts(bm, targetmap=targetMap)
+
+    # 2. For each open mesh edge along a line, find the vertices of the other side that lie in the middle of it
+    onEdgeTolerance = tolerance * 0.2
+    splits = {}         # edge -> {vertex: distance from edge.verts[0]}
+    for onLine in verticesOnLines(bm, lines, tolerance):
+        if len(onLine) < 3:
+            continue
+        positions = sorted((t, index) for index, t in onLine.items())
+        for index in onLine:
+            vert = bm.verts[index]
+            for meshEdge in vert.link_edges:
+                if meshEdge.verts[0] != vert:
+                    continue    # (each edge once)
+                other = meshEdge.other_vert(vert)
+                if other.index not in onLine or len(meshEdge.link_faces) != 1:
+                    continue    # (only open edges: a T-junction leaves the mesh open on both sides of the line)
+                t0 = onLine[index]
+                t1 = onLine[other.index]
+                low, high = min(t0, t1) + tolerance, max(t0, t1) - tolerance
+                faceVerts = {v for face in meshEdge.link_faces for v in face.verts}
+                edgeStart = vert.co
+                edgeDirection = (other.co - vert.co).normalized()
+                for t, middleIndex in positions:
+                    if low < t < high:
+                        middle = bm.verts[middleIndex]
+                        # (the vertex must be right on the mesh edge, so welding doesn't move the surface)
+                        offset = middle.co - edgeStart
+                        if middle in faceVerts or (offset - edgeDirection * offset.dot(edgeDirection)).length > onEdgeTolerance:
+                            continue
+                        # It's a T-junction only if the faces on the other side have an open edge from this vertex
+                        # along the line (otherwise the vertex belongs to some other surface that touches the line)
+                        if canJoin([meshEdge], openEdgesAlongLine(middle, onLine)):
+                            splits.setdefault(meshEdge, {})[middle] = abs(t - t0)
+
+    if not splits:
+        return joined
+
+    # Split each edge at its middle vertices (nearest first), then weld the new vertices onto them
+    targetMap = {}
+    for meshEdge, middles in splits.items():
+        start, end = meshEdge.verts[0], meshEdge.verts[1]
+        current = meshEdge
+        remaining = (end.co - start.co).length
+        for middle, distance in sorted(middles.items(), key=lambda item: item[1]):
+            fromStart = (middle.co - start.co).length
+            if remaining <= 0 or fromStart >= remaining:
+                break
+            newEdge, newVert = bmesh.utils.edge_split(current, start, fromStart / remaining)
+            targetMap[newVert] = middle
+            # carry on along the part of the edge between the new vertex and the end
+            current = next((e for e in newVert.link_edges if e.other_vert(newVert) == end), None)
+            if current is None:
+                break
+            start = newVert
+            remaining = (end.co - start.co).length
+
+    bmesh.ops.weld_verts(bm, targetmap=targetMap)
+    return joined + len(targetMap)
+
+
+# **************************************************************************************
+def safeBevelWeights(bm, bevelledEdges, width, safety=0.9):
+    """
+    Returns a bevel weight for each edge index in 'bevelledEdges': 1, or less where a bevel 'width' wide would
+    overlap nearby geometry (the Bevel modifier multiplies its width by the weight).
+
+    This does the job of the Bevel modifier's 'Clamp Overlap', but edge by edge. Clamp Overlap finds the tightest
+    spot on the whole mesh and narrows every bevel on it to fit, so one sliver triangle could leave a part with
+    almost no bevels at all.
+    """
+    bm.edges.ensure_lookup_table()
+    limit = {index: width for index in bevelledEdges}    # the widest bevel allowed for each edge
+    maxSlide = 2.0 * width      # how far a bevel may move a corner (further makes long slivers that can fold over)
+
+    # Where more than two faces meet at an edge (e.g. a sticker sitting on a surface shares the surface's edge),
+    # a bevel would tear the faces apart, so those edges, and the bevels that end at them, aren't bevelled
+    for index in bevelledEdges:
+        edge = bm.edges[index]
+        if len(edge.link_faces) > 2 or any(len(e.link_faces) > 2 for v in edge.verts for e in v.link_edges):
+            limit[index] = 0.0
+        elif len(edge.link_faces) == 2:
+            # Where the two faces wind in opposite directions (one is facing the wrong way) the bevel folds over
+            loop1, loop2 = edge.link_loops
+            if loop1.vert == loop2.vert:
+                limit[index] = 0.0
+            # A line drawn across a flat surface isn't a corner to round off
+            elif abs(edge.link_faces[0].normal.dot(edge.link_faces[1].normal)) > 0.9998:
+                limit[index] = 0.0
+
+    for face in bm.faces:
+        loops = list(face.loops)
+        count = len(loops)
+
+        # The bevel of an edge cuts a strip along it out of the face. Keep the strip clear of the face's other
+        # vertices (those alongside the edge, e.g. the far corner of a thin triangle), with room for a bevel
+        # coming the other way
+        for loop in loops:
+            edge = loop.edge
+            if edge.index not in limit:
+                continue
+            start = edge.verts[0].co
+            along = edge.verts[1].co - start
+            length = along.length
+            if length == 0:
+                continue
+            along /= length
+            for other in face.verts:
+                if other in edge.verts:
+                    continue
+                offset = other.co - start
+                t = offset.dot(along)
+                if 0 < t < length:
+                    limit[edge.index] = min(limit[edge.index], 0.5 * (offset - along * t).length)
+
+        for k, loop in enumerate(loops):
+            # At this corner of the face, edge 'a' comes in and edge 'b' goes out
+            a = loops[k - 1].edge
+            b = loop.edge
+            aBevelled = a.index in limit
+            bBevelled = b.index in limit
+            if not (aBevelled or bBevelled):
+                continue
+            angle = loop.calc_angle()
+
+            if aBevelled and bBevelled:
+                # The bevels of both edges meet on the line halfway between them, width / sin(angle/2)
+                # from the corner. Keep that well inside the face
+                reach = min(min(a.calc_length(), b.calc_length()) * 0.5, maxSlide) * math.sin(angle * 0.5)
+                limit[a.index] = min(limit[a.index], reach)
+                limit[b.index] = min(limit[b.index], reach)
+                continue
+
+            if angle > math.radians(170):
+                continue        # (nearly straight on: the bevel steps sideways rather than sliding along the edge)
+
+            # The bevel of one edge slides its corner along the other edge, width / sin(angle) from the corner
+            bevelled, slide = (a, b) if aBevelled else (b, a)
+            length = slide.calc_length()
+
+            # If there's also a bevel at the far end of that edge, sliding towards us, they share the length
+            far = slide.other_vert(loop.vert)
+            farIndex = next(i for i, l in enumerate(loops) if l.vert == far)
+            farEdges = (loops[farIndex].edge, loops[farIndex - 1].edge)
+            if any(farEdge != slide and farEdge.index in limit for farEdge in farEdges):
+                length *= 0.5
+            limit[bevelled.index] = min(limit[bevelled.index], min(length, maxSlide) * math.sin(angle))
+
+    # Where a bevel changes width at a corner that is nearly straight on (e.g. around a curve), the edges of the
+    # two bevels meet far from the corner and fold the face over, so each run of bevelled edges that carry on
+    # (within 15 degrees of straight) gets the width of its narrowest edge
+    group = {}
+    def find(index):
+        while group.get(index, index) != index:
+            index = group[index]
+        return index
+    for index in limit:
+        edge = bm.edges[index]
+        for vert in edge.verts:
+            direction = (edge.other_vert(vert).co - vert.co).normalized()
+            for other in vert.link_edges:
+                if other.index not in limit or other.index == index:
+                    continue
+                if (other.other_vert(vert).co - vert.co).normalized().dot(direction) < -0.966:
+                    a, b = find(index), find(other.index)
+                    if a != b:
+                        group[b] = a
+    narrowest = {}
+    for index, allowed in limit.items():
+        root = find(index)
+        narrowest[root] = min(narrowest.get(root, allowed), allowed)
+
+    allowed = {index: narrowest[find(index)] for index in limit}
+
+    # Where a bevel turns a corner on its own (two bevels meet, e.g. around the rim of a curved face), a sudden
+    # change of width twists the bevel, and it can turn its back to the camera, rendering black. So along such
+    # chains the width changes gradually: by at most 25% from one edge to the next
+    chainPairs = []
+    for vert in bm.verts:
+        bevels = [edge.index for edge in vert.link_edges if edge.index in limit and limit[edge.index] > 0]
+        if len(bevels) == 2:
+            chainPairs.append(bevels)
+    for attempt in range(200):
+        changed = False
+        for a, b in chainPairs:
+            if allowed[a] > allowed[b] * 1.25 + 1e-12:
+                allowed[a] = allowed[b] * 1.25
+                changed = True
+            elif allowed[b] > allowed[a] * 1.25 + 1e-12:
+                allowed[b] = allowed[a] * 1.25
+                changed = True
+        if not changed:
+            break
+        # (keeping each straight run the same width)
+        for index in limit:
+            root = find(index)
+            narrowest[root] = min(narrowest[root], allowed[index])
+        for index in limit:
+            allowed[index] = narrowest[find(index)]
+
+    # Where three or more bevels meet at a corner, the Bevel modifier rounds the corner off evenly only if they are
+    # the same width, so they take the width of the narrowest there (just at that corner, so narrow bevels
+    # don't narrow every bevel on the part)
+    cornerWidth = {}
+    for index in limit:
+        if allowed[index] > 0:
+            for vert in bm.edges[index].verts:
+                cornerWidth.setdefault(vert.index, []).append(allowed[index])
+    for index in limit:
+        for vert in bm.edges[index].verts:
+            widths = cornerWidth.get(vert.index, [])
+            if len(widths) >= 3:
+                allowed[index] = min(allowed[index], min(widths))
+
+    weights = {}
+    for index, widest in allowed.items():
+        weights[index] = 1.0 if widest >= width else max(0.0, safety * widest / width)
+    return weights
+
+
+# **************************************************************************************
+def addSharpEdges(bm, ob, geometry, filename, joinTJunctions=False):
     # Parts without any edge lines (e.g. balls, rubber belts, hose segments) have no sharp
     # edges to add, but we still need to write back the welded vertices and fixed normals
     if not geometry.edges:
@@ -4264,9 +4658,21 @@ def addSharpEdges(bm, ob, geometry, filename):
         global globalScaleFactor
         epsilon = 1 * globalScaleFactor
 
+        # Join up the faces that meet at different vertices along an edge line or an open edge of the mesh. Then
+        # the mesh is closed there: it can be bevelled, and a bevel doesn't open a crack between the faces
+        if joinTJunctions:
+            lines = [(geomEdge[0], geomEdge[1]) for geomEdge in geometry.edges]
+            for attempt in range(3):
+                bm.edges.ensure_lookup_table()
+                openEdges = [(e.verts[0].co.copy(), e.verts[1].co.copy()) for e in bm.edges if len(e.link_faces) == 1]
+                if not joinTJunctionsAlongLines(bm, lines + openEdges, 0.1 * globalScaleFactor):
+                    break
+
         bm.faces.ensure_lookup_table()
         bm.verts.ensure_lookup_table()
         bm.edges.ensure_lookup_table()
+        bm.verts.index_update()     # (welding can leave the indices out of date)
+        bm.edges.index_update()
 
         # Create kd tree for fast "find nearest points" calculation
         kd = mathutils.kdtree.KDTree(len(bm.verts))
@@ -4291,23 +4697,29 @@ def addSharpEdges(bm, ob, geometry, filename):
                     edgeIndices[(e0, e1)] = True
                     edgeIndices[(e1, e0)] = True
 
-        # Find the appropriate mesh edges and make them sharp (i.e. not smooth)
+        # The mesh edges between the ends of an edge line
+        sharpEdges = set()
         for meshEdge in bm.edges:
-            v0 = meshEdge.verts[0].index
-            v1 = meshEdge.verts[1].index
-            if (v0, v1) in edgeIndices:
-                # Make edge sharp
+            if (meshEdge.verts[0].index, meshEdge.verts[1].index) in edgeIndices:
+                sharpEdges.add(meshEdge.index)
+
+        # Also the mesh edges along an edge line that the faces split into several mesh edges (issue #29)
+        lines = [(geomEdge[0], geomEdge[1]) for geomEdge in geometry.edges]
+        sharpEdges |= edgesAlongLines(bm, kd, lines, 0.1 * globalScaleFactor)
+
+        # Make them sharp (i.e. not smooth)
+        for meshEdge in bm.edges:
+            if meshEdge.index in sharpEdges:
                 meshEdge.smooth = False
 
         bm.to_mesh(ob.data)
 
         # Set the bevel weights of the sharp edges (the Bevel modifier uses them)
+        # (each edge's weight scales the bevel, so it is small where a full bevel would overlap nearby geometry)
         bevel_weight_attr = ob.data.attributes.new("bevel_weight_edge", "FLOAT", "EDGE")
-        for idx, meshEdge in enumerate(bm.edges):
-            v0 = meshEdge.verts[0].index
-            v1 = meshEdge.verts[1].index
-            if (v0, v1) in edgeIndices:
-                bevel_weight_attr.data[idx].value = 1.0
+        weights = safeBevelWeights(bm, sharpEdges, Options.bevelWidth * globalScaleFactor)
+        for idx, weight in weights.items():
+            bevel_weight_attr.data[idx].value = weight
 
 
 # Commented this next section out as it fails for certain pieces.
@@ -4797,7 +5209,9 @@ def addModifiers(ob):
         bevelModifier.segments = 4
         bevelModifier.profile = 0.5
         bevelModifier.limit_method = 'WEIGHT'
-        bevelModifier.use_clamp_overlap = True
+        # Each edge's bevel weight already keeps its bevel from overlapping (see safeBevelWeights), whereas
+        # Clamp Overlap would narrow every bevel on the part to fit the tightest spot
+        bevelModifier.use_clamp_overlap = False
 
     # Add edge split modifier to each instance
     if Options.edgeSplit:
@@ -4966,7 +5380,7 @@ def createBlenderObjectsFromNode(node,
                 bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
 
             # Add sharp edges and edge weights
-            addSharpEdges(bm, ob, geometry, name)
+            addSharpEdges(bm, ob, geometry, name, joinTJunctions=removeDoubles and Options.joinTJunctions)
 
             bm.clear()
             bm.free()
@@ -5643,7 +6057,7 @@ def loadFromFile(context, filename, isFullFilepath=True):
     #
     # This calculation does not adjust for any gap between the pieces.
     # This is (optionally) done later in the calculations, where we
-    # reduce the size of each piece by 0.2mm (default amount) to allow
+    # reduce the size of each piece by 0.1mm (default amount) to allow
     # for a small gap between pieces. This matches real piece sizes.
     #
     # 3. Blender Scene Unit Scale:

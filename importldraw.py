@@ -50,7 +50,7 @@ smoothShading      = True
 useLook            = "normal"
 useColourScheme    = "lgeo"
 gaps               = True
-realGapWidth       = 0.0002
+realGapWidth       = 0.0001
 createInstances    = True
 numberNodes        = True
 positionObjectOnGroundAtOrigin = True
@@ -189,8 +189,8 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
 
     gapWidthMM: FloatProperty(
         name="Space",
-        description="Amount of space between each part (default 0.2mm)",
-        default=1000 * prefs.get("realGapWidth", 0.0002)
+        description="Amount of space between each part (default 0.1mm)",
+        default=1000 * prefs.get("realGapWidth", 0.0001)
     )
 
     curvedWalls: BoolProperty(
