@@ -5398,7 +5398,7 @@ def createBlenderObjectsFromNode(node,
         # Add light to light bricks
         lightBrickName = name.lower()
         if lightBrickName in globalLightBricks:
-            # The lamp's position, size and strength were set up for a realScale of 100, so scale them to match the model
+            # The lamp's size and strength were set up for a realScale of 100, so scale them to match the model
             lampScale = Options.realScale / 100.0
             lights = bpy.data.lights
             lamp_data = lights.new(name="LightLamp", type='POINT')
@@ -5410,7 +5410,8 @@ def createBlenderObjectsFromNode(node,
                 # Light falls off with the square of distance, so the strength scales with the square of the size
                 emission_node.inputs['Strength'].default_value = 100.0 * lampScale * lampScale
             lamp_object = bpy.data.objects.new(name="LightLamp", object_data=lamp_data)
-            lamp_object.location = (-0.27 * lampScale, 0.0, -0.18 * lampScale)
+            # In the LED, which is at (-27, 18, 0) in LDraw units (LDraw's y axis points down)
+            lamp_object.location = (-27.0 * globalScaleFactor, 0.0, -18.0 * globalScaleFactor)
 
             addNodeToParentWithGroups(blenderNodeParent, [], lamp_object)
 
