@@ -99,6 +99,17 @@ def deselectObject(ob):
     bpy.context.view_layer.objects.active = None
 
 # **************************************************************************************
+def view3DAreas():
+    """The 3D View areas in all windows (none when running in the background, with no windows)"""
+    windowManager = bpy.context.window_manager
+    if windowManager is None:
+        return []
+    # (the current window's first)
+    windows = sorted(windowManager.windows, key=lambda window: window != bpy.context.window)
+    return [area for window in windows if window.screen is not None
+                 for area in window.screen.areas if area.type == 'VIEW_3D']
+
+# **************************************************************************************
 def addPlane(location, size, name):
     """Adds a square plane to the current collection, without using an operator (which would update the whole scene)"""
     half = size * 0.5
@@ -709,7 +720,7 @@ class LegoColours:
         """Convert colour hex value to RGB value."""
         # Handle direct colours
         # Direct colours are documented here: http://www.hassings.dk/l3/l3p.html
-        match = re.fullmatch(r"0x0*([0-9])((?:[A-F0-9]{2}){3})", hexString)
+        match = re.fullmatch(r"0x0*([0-9])((?:[A-F0-9]{2}){3})", hexString, re.IGNORECASE)
         if match is not None:
             digit = match.group(1)
             rgb_str = match.group(2)
@@ -762,8 +773,8 @@ class LegoColours:
     # Colours used if they are missing from both LDConfig.ldr and Stud.io's colour table.
     # (code: (name, sRGB hex, alpha))
     __fallbackColours = {
-        10375:  ("Trans_Black", "212121", 128 / 256.0),     # Added to LDConfig.ldr in 2024 (code 40 became Trans_Brown)
-        100040: ("Trans_Black", "5E5E5C", 128 / 256.0),     # Stud.io's code for Trans-Black
+        10375:  ("Trans_Black", "212121", 128 / 255.0),     # Added to LDConfig.ldr in 2024 (code 40 became Trans_Brown)
+        100040: ("Trans_Black", "5E5E5C", 128 / 255.0),     # Stud.io's code for Trans-Black
     }
 
     def __addColour(code, name, hexDigits, alpha, material="BASIC"):
@@ -869,7 +880,7 @@ class LegoColours:
                     }
 
                     if "ALPHA" in line_split:
-                        colour["alpha"] = int(LegoColours.__getValue(line_split, "ALPHA")) / 256.0
+                        colour["alpha"] = int(LegoColours.__getValue(line_split, "ALPHA")) / 255.0
 
                     if "LUMINANCE" in line_split:
                         colour["luminance"] = int(LegoColours.__getValue(line_split, "LUMINANCE"))
@@ -1283,21 +1294,18 @@ class FileSystem:
 
         filepath = FileSystem.pathInsensitive(filepath)
 
-        # Open it, read just the area containing a possible byte mark
+        # Open it, read just the area containing a possible byte order mark
         with open(filepath, "rb") as encode_check:
-            encoding = encode_check.readline(3)
+            return FileSystem.encodingOf(encode_check.read(2))
 
-        # The file uses UCS-2 (UTF-16) Big Endian encoding
-        if encoding == b"\xfe\xff\x00":
-            return "utf_16_be"
+    def encodingOf(data):
+        """The text encoding for file contents starting with 'data', from its byte order mark (if any)"""
+        # The file uses UCS-2 (UTF-16), Big or Little Endian ('utf_16' reads the byte order mark and removes it)
+        if data.startswith(b"\xfe\xff") or data.startswith(b"\xff\xfe"):
+            return "utf_16"
 
-        # The file uses UCS-2 (UTF-16) Little Endian
-        elif encoding == b"\xff\xfe0":
-            return "utf_16_le"
-
-        # Use LDraw model standard UTF-8
-        else:
-            return "utf_8"
+        # Use LDraw model standard UTF-8 ('utf_8_sig' also removes a byte order mark, if there is one)
+        return "utf_8_sig"
 
     def readTextFile(filepath):
         """Read a text file, with various checks for type of encoding"""
@@ -1308,12 +1316,7 @@ class FileSystem:
             data = ZipLibrary.read(filepath)
             if data is None:
                 return None
-            if data.startswith(b"\xfe\xff\x00"):
-                encoding = "utf_16_be"
-            elif data.startswith(b"\xff\xfe0"):
-                encoding = "utf_16_le"
-            else:
-                encoding = "utf_8"
+            encoding = FileSystem.encodingOf(data)
             try:
                 text = data.decode(encoding)
             except UnicodeDecodeError:
@@ -1849,7 +1852,8 @@ class LDrawGeometry:
         allowBevelWeight = not isStudLogo
 
         for edge in geometry.edges:
-            newEdges.append( (fixedMatrix @ edge[0], fixedMatrix @ edge[1], allowBevelWeight) )
+            # (an edge line from a logo stays unbevelled when the stud it's in is added to a part)
+            newEdges.append( (fixedMatrix @ edge[0], fixedMatrix @ edge[1], allowBevelWeight and (len(edge) < 3 or edge[2])) )
         self.edges.extend(newEdges)
 
 
@@ -2456,7 +2460,7 @@ class LDrawFile:
                     if parameters[2] == "GROUP":
                         if parameters[3] == "BEGIN":
                             currentGroupNames.append(" ".join(parameters[4:]).strip())
-                        elif parameters[3] == "END":
+                        elif parameters[3] == "END" and currentGroupNames:
                             currentGroupNames.pop(-1)
                     if parameters[2] == "CAMERA":
                         if Options.importCameras:
@@ -2504,48 +2508,60 @@ class LDrawFile:
 
                 self.isModel = (not self.isPart) and (not self.isSubPart)
 
-                # Parse a File reference
-                if parameters[0] == "1":
-                    (x, y, z, a, b, c, d, e, f, g, h, i) = map(float, parameters[2:14])
-                    (x, y, z) = Math.scaleMatrix @ mathutils.Vector((x, y, z))
-                    localMatrix = mathutils.Matrix( ((a, b, c, x), (d, e, f, y), (g, h, i, z), (0, 0, 0, 1)) )
-
-                    new_filename = " ".join(parameters[14:])
-                    new_colourName = parameters[1]
-
-                    det = localMatrix.determinant()
-                    if det < 0:
-                        bfcInvertNext = not bfcInvertNext
-                    canCullChildNode = (self.bfcCertified or self.isModel) and bfcLocalCull and (det != 0)
-
-                    if new_filename != "":
-                        newNode = LDrawNode(new_filename, False, self.fullFilepath, new_colourName, localMatrix, canCullChildNode, bfcInvertNext, processingLSynthParts, not self.isModel, False, currentGroupNames)
-                        newNode.texmap = currentTexture
-                        newNode.hidden = leocadPieceHidden
-                        self.childNodes.append(newNode)
-                    else:
-                        printWarningOnce("In file '{0}', the line '{1}' is not formatted corectly (ignoring).".format(self.fullFilepath, line))
-                    leocadPieceHidden = False
-
-                # Parse an edge
-                elif parameters[0] == "2":
-                    self.geometry.parseEdge(parameters)
-
-                # Parse a Face (either a triangle or a quadrilateral)
-                elif parameters[0] == "3" or parameters[0] == "4":
-                    if self.bfcCertified is None:
-                        self.bfcCertified = False
-                    if not self.bfcCertified or not bfcLocalCull:
-                        printWarningOnce("Found double-sided polygons in file {0}".format(self.filename))
-                        self.isDoubleSided = True
-
-                    assert len(self.geometry.faces) == len(self.geometry.faceInfo)
-                    self.geometry.parseFace(parameters, self.bfcCertified and bfcLocalCull, bfcWindingCCW, isGrainySlopeAllowed, currentTexture)
-                    assert len(self.geometry.faces) == len(self.geometry.faceInfo)
-
-                bfcInvertNext = False
+                try:
+                    bfcInvertNext, leocadPieceHidden = self.__parseLine(parameters, line, bfcInvertNext, bfcLocalCull, bfcWindingCCW,
+                                                                        leocadPieceHidden, currentTexture, processingLSynthParts,
+                                                                        currentGroupNames, isGrainySlopeAllowed)
+                except (ValueError, IndexError):
+                    printWarningOnce("In file '{0}', the line '{1}' is not formatted correctly (ignoring).".format(self.fullFilepath, line.strip()))
+                    bfcInvertNext = False
 
         #debugPrint("File {0} is part = {1}, is subPart = {2}, isModel = {3}".format(filename, self.isPart, isSubPart, self.isModel))
+
+    def __parseLine(self, parameters, line, bfcInvertNext, bfcLocalCull, bfcWindingCCW, leocadPieceHidden, currentTexture,
+                    processingLSynthParts, currentGroupNames, isGrainySlopeAllowed):
+        """Parses a line of type 1 to 5. Returns the new (bfcInvertNext, leocadPieceHidden)"""
+        # Parse a File reference
+        if parameters[0] == "1":
+            (x, y, z, a, b, c, d, e, f, g, h, i) = map(float, parameters[2:14])
+            (x, y, z) = Math.scaleMatrix @ mathutils.Vector((x, y, z))
+            localMatrix = mathutils.Matrix( ((a, b, c, x), (d, e, f, y), (g, h, i, z), (0, 0, 0, 1)) )
+
+            new_filename = " ".join(parameters[14:])
+            new_colourName = parameters[1]
+
+            det = localMatrix.determinant()
+            if det < 0:
+                bfcInvertNext = not bfcInvertNext
+            canCullChildNode = (self.bfcCertified or self.isModel) and bfcLocalCull and (det != 0)
+
+            if new_filename != "":
+                newNode = LDrawNode(new_filename, False, self.fullFilepath, new_colourName, localMatrix, canCullChildNode, bfcInvertNext, processingLSynthParts, not self.isModel, False, currentGroupNames)
+                newNode.texmap = currentTexture
+                newNode.hidden = leocadPieceHidden
+                self.childNodes.append(newNode)
+            else:
+                printWarningOnce("In file '{0}', the line '{1}' is not formatted correctly (ignoring).".format(self.fullFilepath, line))
+            leocadPieceHidden = False
+
+        # Parse an edge
+        elif parameters[0] == "2":
+            self.geometry.parseEdge(parameters)
+
+        # Parse a Face (either a triangle or a quadrilateral)
+        elif parameters[0] == "3" or parameters[0] == "4":
+            if self.bfcCertified is None:
+                self.bfcCertified = False
+            if not self.bfcCertified or not bfcLocalCull:
+                printWarningOnce("Found double-sided polygons in file {0}".format(self.filename))
+                self.isDoubleSided = True
+
+            assert len(self.geometry.faces) == len(self.geometry.faceInfo)
+            self.geometry.parseFace(parameters, self.bfcCertified and bfcLocalCull, bfcWindingCCW, isGrainySlopeAllowed, currentTexture)
+            assert len(self.geometry.faces) == len(self.geometry.faceInfo)
+
+        bfcInvertNext = False
+        return (bfcInvertNext, leocadPieceHidden)
 
 
 # **************************************************************************************
@@ -2555,9 +2571,32 @@ class BlenderMaterials:
 
     __material_list = {}
 
+    # The subsurface scattering of the node groups that use it: (weight, radius at real Lego scale)
+    # (Scattering in the standard material, 0.1 mm as Blender 3 had it, made renders about 30-80% slower and
+    # noisier for a barely visible difference, so it is off; a weight of 1 turns it on)
+    __subsurface = {
+        'Lego Standard':    (0.0, 0.002),
+        'Lego Emission':    (1.0, 0.05),
+        'Lego Pearlescent': (1.0, 0.25),
+        'Lego Milky White': (1.0, 0.05),
+    }
+
+    # Node groups whose settings depend on the size of the model (Options.realScale). Each scale gets its own
+    # groups and materials, so models imported into the same file at different scales all look right
+    __scaleDependentGroups = {'Slope Texture'} | set(__subsurface)
+
+    def __scaleSuffix():
+        if Options.instructionsLook or Options.realScale == 1:
+            return ""
+        return " (scale {0:g})".format(Options.realScale)
+
     def __getGroupName(name):
         if Options.instructionsLook:
+            if name == 'Slope Texture':
+                return name     # (not used by the instructions look)
             return name + " Instructions"
+        if name in BlenderMaterials.__scaleDependentGroups:
+            return name + BlenderMaterials.__scaleSuffix()
         return name
 
     def __createNodeBasedMaterial(blenderName, col, isSlopeMaterial=False, image=None, wrapU=False):
@@ -3057,6 +3096,10 @@ class BlenderMaterials:
         node.inputs['Transmission Weight'].default_value = transmission
 
         node.inputs['Subsurface Radius'].default_value = mathutils.Vector( (sub_rad, sub_rad, sub_rad) )
+        # The scattering distance is Radius x Scale. Blender's default Scale (0.05) is for real Lego scale, so it
+        # grows with the model
+        if subsurface > 0:
+            node.inputs['Subsurface Scale'].default_value = 0.05 * Options.realScale
         node.inputs['Metallic'].default_value = metallic
         node.inputs['Roughness'].default_value = roughness
         node.inputs['IOR'].default_value = ior
@@ -3364,9 +3407,9 @@ class BlenderMaterials:
         if Options.instructionsLook:
             blenderName = "MatInst_{0}".format(colourName)
         elif Options.curvedWalls and not isSlopeMaterial:
-            blenderName = "Material_{0}_c".format(colourName)
+            blenderName = "Material_{0}_c".format(colourName) + BlenderMaterials.__scaleSuffix()
         else:
-            blenderName = "Material_{0}".format(colourName)
+            blenderName = "Material_{0}".format(colourName) + BlenderMaterials.__scaleSuffix()
 
         # If the name already exists in Blender, use that
         if Options.overwriteExistingMaterials is False:
@@ -3583,10 +3626,11 @@ class BlenderMaterials:
     def __createBlenderSlopeTextureNodeGroup():
         global globalScaleFactor
 
-        if bpy.data.node_groups.get('Slope Texture') is None:
+        groupName = BlenderMaterials.__getGroupName('Slope Texture')
+        if bpy.data.node_groups.get(groupName) is None:
             debugPrint("createBlenderSlopeTextureNodeGroup #create")
             # create a group
-            group, node_input, node_output = BlenderMaterials.__createGroup('Slope Texture', -530, 0, 300, 0, False)
+            group, node_input, node_output = BlenderMaterials.__createGroup(groupName, -530, 0, 300, 0, False)
             BlenderMaterials.addInputSocket(group, 'NodeSocketFloat', 'Strength')
             BlenderMaterials.addInputSocket(group, 'NodeSocketVectorDirection', 'Normal')
             BlenderMaterials.addOutputSocket(group, 'NodeSocketVectorDirection', 'Normal')
@@ -3753,7 +3797,7 @@ class BlenderMaterials:
                 group.links.new(node_emission.outputs['Emission'], node_output.inputs['Shader'])
             else:
                 if BlenderMaterials.usePrincipledShader:
-                    node_main = BlenderMaterials.__nodePrincipled(group.nodes, 5 * globalScaleFactor, 0.05, 0.0, 0.1, 0.0, 0.0, 1.45, 0.0, 0, 0)
+                    node_main = BlenderMaterials.__nodePrincipled(group.nodes, 0.0, 0.002, 0.0, 0.1, 0.0, 0.0, 1.45, 0.0, 0, 0)
                     output_name = 'BSDF'
                     color_name = 'Base Color'
                     group.links.new(node_input.outputs['Color'], BlenderMaterials.__getSubsurfaceColor(node_main))
@@ -4265,6 +4309,19 @@ class BlenderMaterials:
         BlenderMaterials.__createBlenderLegoSpeckleNodeGroup()
         BlenderMaterials.__createBlenderLegoMilkyWhiteNodeGroup()
 
+        # The node groups may already exist (e.g. from a previous import), so make sure they scatter light by the
+        # current amount (groups made by older versions turned it off in Lego Standard)
+        if not Options.instructionsLook:
+            for name, (weight, radius) in BlenderMaterials.__subsurface.items():
+                group = bpy.data.node_groups.get(BlenderMaterials.__getGroupName(name))
+                if group is None:
+                    continue
+                for node in group.nodes:
+                    if node.type == 'BSDF_PRINCIPLED':
+                        node.inputs['Subsurface Weight'].default_value = weight
+                        node.inputs['Subsurface Radius'].default_value = (radius, radius, radius)
+                        node.inputs['Subsurface Scale'].default_value = 0.05 * Options.realScale
+
         # The node groups may already exist (e.g. from a previous import), so make sure they use the current opacity
         if Options.instructionsLook:
             for name in ('Lego Transparent', 'Lego Transparent Fluorescent'):
@@ -4327,6 +4384,30 @@ def joinStraightLines(lines, tolerance):
 
 
 # **************************************************************************************
+def verticesNearLine(kd, p0, p1, length, tolerance):
+    """
+    The (co, index) of the vertices in the sphere around the line from p0 to p1 (centred on its middle, radius
+    length/2 + tolerance), from which the vertices on the line are picked. A long line (e.g. along the edge of a
+    baseplate) is searched as a row of small spheres, since one big sphere holds most of the mesh.
+    """
+    middle = (p0 + p1) * 0.5
+    radius = length * 0.5 + tolerance
+    pieceLength = 20 * globalScaleFactor
+    if length <= 2 * pieceLength:
+        return [(co, index) for co, index, dist in kd.find_range(middle, radius)]
+
+    pieces = math.ceil(length / pieceLength)
+    pieceRadius = length / pieces * 0.5 + 2 * tolerance
+    found = {}
+    for k in range(pieces):
+        centre = p0.lerp(p1, (k + 0.5) / pieces)
+        for co, index, dist in kd.find_range(centre, pieceRadius):
+            # (the same vertices as the big sphere would find)
+            if index not in found and (co - middle).length <= radius:
+                found[index] = co
+    return [(co, index) for index, co in found.items()]
+
+# **************************************************************************************
 def edgesAlongLines(bm, kd, lines, tolerance):
     """
     Returns the indices of the mesh edges that lie along an edge line, including where the faces split the line
@@ -4342,7 +4423,7 @@ def edgesAlongLines(bm, kd, lines, tolerance):
 
         # The vertices on the line segment (searching the sphere around the line)
         onLine = set()
-        for co, index, dist in kd.find_range((p0 + p1) * 0.5, length * 0.5 + tolerance):
+        for co, index in verticesNearLine(kd, p0, p1, length, tolerance):
             t = (co - p0).dot(direction)
             if -tolerance <= t <= length + tolerance and (co - p0 - direction * t).length <= tolerance:
                 onLine.add(index)
@@ -4376,7 +4457,7 @@ def verticesOnLines(bm, lines, tolerance):
         direction /= length
 
         onLine = {}
-        for co, index, dist in kd.find_range((p0 + p1) * 0.5, length * 0.5 + tolerance):
+        for co, index in verticesNearLine(kd, p0, p1, length, tolerance):
             t = (co - p0).dot(direction)
             if -tolerance <= t <= length + tolerance and (co - p0 - direction * t).length <= tolerance:
                 onLine[index] = t
@@ -4676,8 +4757,9 @@ def addSharpEdges(bm, ob, geometry, filename, joinTJunctions=False):
 
         # Join up the faces that meet at different vertices along an edge line or an open edge of the mesh. Then
         # the mesh is closed there: it can be bevelled, and a bevel doesn't open a crack between the faces
+        # (not along the edge lines of stud logos, which aren't bevelled, see below: a baseplate has a thousand logos)
         if joinTJunctions:
-            lines = [(geomEdge[0], geomEdge[1]) for geomEdge in geometry.edges]
+            lines = [(geomEdge[0], geomEdge[1]) for geomEdge in geometry.edges if len(geomEdge) < 3 or geomEdge[2]]
             for attempt in range(3):
                 bm.edges.ensure_lookup_table()
                 openEdges = [(e.verts[0].co.copy(), e.verts[1].co.copy()) for e in bm.edges if len(e.link_faces) == 1]
@@ -4696,22 +4778,33 @@ def addSharpEdges(bm, ob, geometry, filename, joinTJunctions=False):
             kd.insert(v.co, i)
         kd.balance()
 
-        # The mesh edges between the ends of an edge line (between a vertex near one end and a vertex near the other)
-        sharpEdges = set()
-        for geomEdge in geometry.edges:
-            near0 = [index for (co, index, dist) in kd.find_range(geomEdge[0], epsilon)]
-            if not near0:
-                continue
-            near1 = {index for (co, index, dist) in kd.find_range(geomEdge[1], epsilon)}
-            for index in near0:
-                vert = bm.verts[index]
-                for meshEdge in vert.link_edges:
-                    if meshEdge.other_vert(vert).index in near1:
-                        sharpEdges.add(meshEdge.index)
+        # The edge lines of a stud's logo are sharp, but aren't bevelled: the raised letters are tiny, and bevelling
+        # them multiplies the size of the mesh about 20 times (a baseplate with logo studs runs out of memory)
+        bevelled = [geomEdge for geomEdge in geometry.edges if len(geomEdge) < 3 or geomEdge[2]]
+        notBevelled = [geomEdge for geomEdge in geometry.edges if len(geomEdge) >= 3 and not geomEdge[2]]
 
-        # Also the mesh edges along an edge line that the faces split into several mesh edges (issue #29)
-        lines = [(geomEdge[0], geomEdge[1]) for geomEdge in geometry.edges]
-        sharpEdges |= edgesAlongLines(bm, kd, lines, 0.1 * globalScaleFactor)
+        def edgesOfLines(edgeLines):
+            """The mesh edges along the given edge lines"""
+            result = set()
+            # The mesh edges between the ends of an edge line (between a vertex near one end and a vertex near the other)
+            for geomEdge in edgeLines:
+                near0 = [index for (co, index, dist) in kd.find_range(geomEdge[0], epsilon)]
+                if not near0:
+                    continue
+                near1 = {index for (co, index, dist) in kd.find_range(geomEdge[1], epsilon)}
+                for index in near0:
+                    vert = bm.verts[index]
+                    for meshEdge in vert.link_edges:
+                        if meshEdge.other_vert(vert).index in near1:
+                            result.add(meshEdge.index)
+
+            # Also the mesh edges along an edge line that the faces split into several mesh edges (issue #29)
+            lines = [(geomEdge[0], geomEdge[1]) for geomEdge in edgeLines]
+            result |= edgesAlongLines(bm, kd, lines, 0.1 * globalScaleFactor)
+            return result
+
+        bevelledEdges = edgesOfLines(bevelled)
+        sharpEdges = bevelledEdges | edgesOfLines(notBevelled)
 
         # Make them sharp (i.e. not smooth)
         for meshEdge in bm.edges:
@@ -4720,12 +4813,13 @@ def addSharpEdges(bm, ob, geometry, filename, joinTJunctions=False):
 
         bm.to_mesh(ob.data)
 
-        # Set the bevel weights of the sharp edges (the Bevel modifier uses them)
+        # Set the bevel weights of the sharp edges (the Bevel modifier uses them, so they're only needed for bevels)
         # (each edge's weight scales the bevel, so it is small where a full bevel would overlap nearby geometry)
-        bevel_weight_attr = ob.data.attributes.new("bevel_weight_edge", "FLOAT", "EDGE")
-        weights = safeBevelWeights(bm, sharpEdges, Options.bevelWidth * globalScaleFactor)
-        for idx, weight in weights.items():
-            bevel_weight_attr.data[idx].value = weight
+        if Options.addBevelModifier:
+            bevel_weight_attr = ob.data.attributes.new("bevel_weight_edge", "FLOAT", "EDGE")
+            weights = safeBevelWeights(bm, bevelledEdges, Options.bevelWidth * globalScaleFactor)
+            for idx, weight in weights.items():
+                bevel_weight_attr.data[idx].value = weight
 
 
 # Commented this next section out as it fails for certain pieces.
@@ -5225,7 +5319,8 @@ def bakeScene():
 def removeBakeScene():
     scene = bpy.data.scenes.get(bakeSceneName)
     if scene is not None:
-        bpy.data.scenes.remove(scene)
+        # (bpy.data.scenes.remove crashes Blender 4.2 when there is no current window)
+        bpy.data.batch_remove([scene])
 
 # **************************************************************************************
 def bakeModifiers(mesh):
@@ -5441,13 +5536,6 @@ def createBlenderObjectsFromNode(node,
             bm.clear()
             bm.free()
 
-            # Show the sharp edges in Edit Mode
-            for area in bpy.context.screen.areas:  # iterate through areas in current screen
-                if area.type == 'VIEW_3D':
-                    for space in area.spaces:  # iterate through spaces in current VIEW_3D area
-                        if space.type == 'VIEW_3D':  # check if space is a 3D view
-                            space.overlay.show_edge_sharp = True
-
             # Scale for Gaps
             if Options.gaps and node.file.isPart:
                 # Distance between gaps is controlled by Options.realGapWidth
@@ -5585,6 +5673,10 @@ def setupRealisticLook():
     scene = bpy.context.scene
     render = scene.render
 
+    # (a scene can have no World, e.g. one added with 'New' in the scene menu)
+    if scene.world is None:
+        scene.world = bpy.data.worlds.get("World") or bpy.data.worlds.new("World")
+
     # Use cycles render
     scene.render.engine = 'CYCLES'
 
@@ -5649,18 +5741,14 @@ def setupRealisticLook():
         for i in range(len(layers)):
             layers[i].use = True
 
-        # Create Compositing Nodes
-        scene.use_nodes = True
-        if hasattr(scene, "compositing_node_group"):
-            # Blender 5
-            node_tree = bpy.data.node_groups.new("Compositor Nodes", "CompositorNodeTree")
-            scene.compositing_node_group = node_tree
-        elif hasattr(scene, "node_tree"):
-            # Before Blender 5
+        # Before Blender 5: remove the instructions look's compositing nodes (for Blender 5, see below)
+        node_tree = None
+        if not hasattr(scene, "compositing_node_group") and hasattr(scene, "node_tree"):
+            scene.use_nodes = True
             node_tree = scene.node_tree
 
         # If scene nodes exist for compositing instructions look, remove them
-        nodeNames = [node.name for node in node_tree.nodes]
+        nodeNames = [node.name for node in node_tree.nodes] if node_tree is not None else []
         if "Solid" in nodeNames:
            node_tree.nodes.remove(node_tree.nodes["Solid"])
 
@@ -5680,6 +5768,14 @@ def setupRealisticLook():
 
                 links = node_tree.links
                 links.new(rl.outputs[0], zCombine.inputs[0])
+
+    # Blender 5: the realistic look doesn't need compositing, so the instructions look's compositor is taken off
+    # the scene. So is an empty one (which earlier versions of this add-on added here), since rendering with it
+    # fails with "No Group Output or File Output nodes in scene"
+    if hasattr(scene, "compositing_node_group"):
+        compositor = scene.compositing_node_group
+        if compositor is not None and (len(compositor.nodes) == 0 or "Solid" in compositor.nodes or "Trans" in compositor.nodes):
+            scene.compositing_node_group = None
 
     removeCollection('Black Edged Bricks Collection')
     removeCollection('White Edged Bricks Collection')
@@ -5750,29 +5846,17 @@ def setupInstructionsLook():
     # Find or create the render/view layers we are interested in:
     layers = getLayers(scene)
 
-    # Remember current view layer
-    current_view_layer = bpy.context.view_layer
-
-    # Add layers as needed
+    # Add layers as needed (directly, since the operator needs a window, and makes the new layer the current one)
     layerNames = list(map((lambda x: x.name), layers))
     if "SolidBricks" not in layerNames:
-        bpy.ops.scene.view_layer_add()
-
-        layers[-1].name = "SolidBricks"
-        layers[-1].use = True
+        scene.view_layers.new("SolidBricks").use = True
         layerNames.append("SolidBricks")
     solidLayer = layerNames.index("SolidBricks")
 
     if "TransparentBricks" not in layerNames:
-        bpy.ops.scene.view_layer_add()
-
-        layers[-1].name = "TransparentBricks"
-        layers[-1].use = True
+        scene.view_layers.new("TransparentBricks").use = True
         layerNames.append("TransparentBricks")
     transLayer = layerNames.index("TransparentBricks")
-
-    # Restore current view layer
-    bpy.context.window.view_layer = current_view_layer
 
     # Use Z layer (defaults to off)
     layers[transLayer].use_pass_z = True
@@ -6386,13 +6470,11 @@ def loadFromFile(context, filename, isFullFilepath=True):
 
         # Find the (first) 3D View, then set the view's 'look at' and 'distance'
         # Note: Not a camera object, but the point of view in the UI.
-        areas = [area for area in bpy.context.window.screen.areas if area.type == 'VIEW_3D']
+        areas = view3DAreas()
         if len(areas) > 0:
-            area = areas[0]
-            with bpy.context.temp_override(area=area):
-                view3d = bpy.context.space_data
-                view3d.region_3d.view_location = boundingBoxCentre      # Where to look at
-                view3d.region_3d.view_distance = boundingBoxDistance    # How far from target
+            view3d = areas[0].spaces.active
+            view3d.region_3d.view_location = boundingBoxCentre      # Where to look at
+            view3d.region_3d.view_distance = boundingBoxDistance    # How far from target
 
     # Get existing object names
     sceneObjectNames = [x.name for x in scene.objects]
@@ -6412,6 +6494,12 @@ def loadFromFile(context, filename, isFullFilepath=True):
 
     # All the parts are made, so the scene used for baking is no longer needed
     removeBakeScene()
+
+    # Show the sharp edges in Edit Mode
+    for area in view3DAreas():
+        for space in area.spaces:
+            if space.type == 'VIEW_3D':
+                space.overlay.show_edge_sharp = True
 
     # Finally add each object to the scene
     debugPrint("Adding {0} objects to scene".format(len(globalObjectsToAdd)))

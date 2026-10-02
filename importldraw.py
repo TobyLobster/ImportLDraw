@@ -442,5 +442,6 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.Options.positionCamera             = self.positionCamera
         loadldraw.Options.cameraBorderPercent        = self.cameraBorderPercentage / 100.0
 
-        loadldraw.loadFromFile(self, self.filepath)
+        if loadldraw.loadFromFile(self, self.filepath) is None:
+            return {'CANCELLED'}
         return {'FINISHED'}
