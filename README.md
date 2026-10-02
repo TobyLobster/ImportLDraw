@@ -20,11 +20,12 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 + **LSynth** bendable parts supported (synthesized models).
 + *Cycles* (realistic look) and *EEVEE* (instructions look) render engines supported.
 + Import **photorealistic** look, or **Instructions** look.
-+ **Physically Based Realistic materials** - standard brick material, transparent, rubber, chrome, metal, pearlescent, glow-in-the-dark, glitter and speckle.
++ **Physically Based Realistic materials** - standard brick material, transparent, rubber, chrome, metal, pearlescent, glow-in-the-dark, glitter, speckle and fabric (cape cloth, canvas, velvet, string and fur, for capes, sails and other cloth parts).
 + **Principled Shader** - Uses Blender's Principled BSDF shader for an optimal look.
 + **Textures** - printed parts and stickers that use the LDraw texture mapping extension (!TEXMAP: planar, cylindrical and spherical) import with their images. Images are found in the *textures* folders of the parts library, or can be embedded in the model file (!DATA). Embedded images are packed into the .blend file, or optionally saved next to the model. Untick *Import textures* to import the untextured versions instead.
 + **Accurate colour handling**. Correct colour space management is used so that e.g. black parts look black.
 + **Direct colours** supported.
++ **Colours defined in models** - colour definitions (!COLOUR) inside a model or part file are used, following the LDraw rules: from where a colour is defined to the end of that file, and in the submodels and parts it uses after that.
 + **Back face culling** - fully parses all BFC information, for accurate normals.
 + **Linked duplicates** - Parts of the same type and colour can share the same mesh.
 + **Linked studs** - studs can also share the same mesh.
@@ -34,6 +35,7 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 + **Rounded edges** - Optionally bevels the edges of each part, each edge as wide as fits, so detailed parts round off cleanly. By default the bevels are baked into each part's shared mesh, which uses far less memory for big models; untick *Bake bevels* to keep them as Bevel modifiers you can adjust after import.
 + **Concave walls** - Optionally look as if each brick has very slightly concave walls (with the photorealistic renderer), which affects the look of light reflections.
 + **Light bricks** - Bricks that emit light are supported.
++ **Studio lighting** - The realistic look is lit by an HDR image of a studio (*background.exr*). If the image is missing, a similar built-in studio light is used instead.
 + **Parenting Minifigs** - Optionally make the parts of a minifig parented to each other, so e.g. rotating an arm also moves the hand with it.
 + **Submodels as collections** - Optionally give each submodel its own collection, nested like the submodels, so whole submodels can be shown or hidden, or used with geometry nodes.
 + **Fast** - even large models can be imported in seconds.

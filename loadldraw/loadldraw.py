@@ -222,6 +222,7 @@ class Options:
 
     addBevelModifier   = True           # Adds a bevel modifier to each part (for rounded edges)
     bevelWidth         = 0.5            # Width of bevel
+    bevelSegments      = 3              # Segments in each bevel (fewer is less geometry; 3 looks as round as 4)
     bakeBevels         = True           # The bevel and edge split are applied to each part's mesh, which all instances share, rather than being modifiers on every object (uses far less memory for big models)
 
     addWorldEnvironmentTexture = True   # Add an environment texture
@@ -267,7 +268,8 @@ class Options:
                          str(bakingModifiers()),
                          str(Options.addBevelModifier),
                          str(Options.useTextures),
-                         str(Options.bevelWidth)])
+                         str(Options.bevelWidth),
+                         str(Options.bevelSegments)])
 
 # **************************************************************************************
 # Globals
@@ -2709,9 +2711,45 @@ class BlenderMaterials:
     def __fabricGroupName(fabricType):
         return "Lego Fabric" + (" " + fabricType.capitalize() if fabricType else "")
 
+    # The textures that are sized in the part's own units: group name -> (texture node type, texture scale,
+    # coordinate unit). The unit is 'LDU' (the texture scale is then per LDU), or 'REAL' (metres at real Lego scale,
+    # which keeps the look these textures always had at a scale of 1)
+    __sizedTextures = {
+        # (sizes about as they were before on a 2 x 4 brick)
+        'Lego Rubber Solid':        ('TEX_NOISE',   4.0, 'LDU'),     # fine grain, about 0.25 LDU
+        'Lego Rubber Translucent':  ('TEX_NOISE',   4.0, 'LDU'),
+        'Lego Glitter':             ('TEX_VORONOI', 2.0, 'LDU'),     # flakes about 0.5 LDU across
+        'Lego Speckle':             ('TEX_VORONOI', 1.25, 'LDU'),    # specks about 0.8 LDU across
+        'Lego Pearlescent':         ('TEX_WAVE',    0.5, 'REAL'),
+    }
+
     # Node groups whose settings depend on the size of the model (Options.realScale). Each scale gets its own
     # groups and materials, so models imported into the same file at different scales all look right
-    __scaleDependentGroups = {'Slope Texture'} | set(__subsurface) | set(map(__fabricGroupName, __fabrics))
+    __scaleDependentGroups = {'Slope Texture'} | set(__subsurface) | set(map(__fabricGroupName, __fabrics)) | set(__sizedTextures)
+
+    def __sizeTextures(group, textureType, textureScale, unit):
+        """
+        Measures the textures of the given type in the group in the part's own coordinates (see __sizedTextures).
+        Also updates groups made by earlier versions, which used Blender's default coordinates.
+        """
+        coordinates = group.nodes.get("Part Coordinates")
+        if coordinates is None:
+            texCoord = group.nodes.new('ShaderNodeTexCoord')
+            texCoord.name = "Part Coordinates Source"
+            coordinates = group.nodes.new('ShaderNodeVectorMath')
+            coordinates.operation = 'SCALE'
+            coordinates.name = "Part Coordinates"
+            textures = [node for node in group.nodes if node.type == textureType]
+            if textures:
+                texCoord.location = textures[0].location.x - 400, textures[0].location.y
+                coordinates.location = textures[0].location.x - 200, textures[0].location.y
+            group.links.new(texCoord.outputs['Object'], coordinates.inputs[0])
+        coordinates.inputs['Scale'].default_value = (1.0 / globalScaleFactor) if unit == 'LDU' else (0.0004 / globalScaleFactor)
+
+        for node in group.nodes:
+            if node.type == textureType:
+                group.links.new(coordinates.outputs[0], node.inputs['Vector'])
+                node.inputs['Scale'].default_value = textureScale
 
     def __scaleSuffix():
         if Options.instructionsLook or Options.realScale == 1:
@@ -3781,7 +3819,7 @@ class BlenderMaterials:
             # create nodes
             node_texture_coordinate = BlenderMaterials.__nodeTexCoord(group.nodes, -300, 240)
             node_voronoi = BlenderMaterials.__nodeVoronoi(group.nodes, 3.0/globalScaleFactor, -100, 155)
-            node_bump = BlenderMaterials.__nodeBumpShader(group.nodes, 0.3, 0.08, 90, 50)
+            node_bump = BlenderMaterials.__nodeBumpShader(group.nodes, 0.3, 0.08 * Options.realScale, 90, 50)
             node_bump.invert = True
 
             # link nodes together
@@ -4067,8 +4105,8 @@ class BlenderMaterials:
 
             if BlenderMaterials.usePrincipledShader:
                 node_noise = BlenderMaterials.__nodeNoiseTexture(group.nodes, 250, 2, 0.0, 45-770, 340-200)
-                node_bump1 = BlenderMaterials.__nodeBumpShader(group.nodes, 1.0, 0.3, 45-366, 340-200)
-                node_bump2 = BlenderMaterials.__nodeBumpShader(group.nodes, 1.0, 0.1, 45-184, 340-115)
+                node_bump1 = BlenderMaterials.__nodeBumpShader(group.nodes, 1.0, 0.3 * Options.realScale, 45-366, 340-200)
+                node_bump2 = BlenderMaterials.__nodeBumpShader(group.nodes, 1.0, 0.1 * Options.realScale, 45-184, 340-115)
                 node_subtract = BlenderMaterials.__nodeMath(group.nodes, 'SUBTRACT', 45-570, 340-216)
                 node_principled  = BlenderMaterials.__nodePrincipled(group.nodes, 0.0, 0.0, 0.0, 0.4, 0.03, 0.0, 1.45, 0.0, 45, 340)
 
@@ -4101,8 +4139,8 @@ class BlenderMaterials:
 
             if BlenderMaterials.usePrincipledShader:
                 node_noise = BlenderMaterials.__nodeNoiseTexture(group.nodes, 250, 2, 0.0, 45-770, 340-200)
-                node_bump1 = BlenderMaterials.__nodeBumpShader(group.nodes, 1.0, 0.3, 45-366, 340-200)
-                node_bump2 = BlenderMaterials.__nodeBumpShader(group.nodes, 1.0, 0.1, 45-184, 340-115)
+                node_bump1 = BlenderMaterials.__nodeBumpShader(group.nodes, 1.0, 0.3 * Options.realScale, 45-366, 340-200)
+                node_bump2 = BlenderMaterials.__nodeBumpShader(group.nodes, 1.0, 0.1 * Options.realScale, 45-184, 340-115)
                 node_subtract = BlenderMaterials.__nodeMath(group.nodes, 'SUBTRACT', 45-570, 340-216)
                 node_principled  = BlenderMaterials.__nodePrincipled(group.nodes, 0.0, 0.0, 0.0, 0.4, 0.03, 0.0, 1.45, 0.0, 45, 340)
                 node_mix = BlenderMaterials.__nodeMix(group.nodes, 0.8, 300, 290)
@@ -4528,6 +4566,13 @@ class BlenderMaterials:
         BlenderMaterials.__createBlenderLegoGlitterNodeGroup()
         BlenderMaterials.__createBlenderLegoSpeckleNodeGroup()
         BlenderMaterials.__createBlenderLegoMilkyWhiteNodeGroup()
+
+        # Textures sized in the part's own units (also updates groups that already exist)
+        if not Options.instructionsLook:
+            for name, (textureType, textureScale, unit) in BlenderMaterials.__sizedTextures.items():
+                group = bpy.data.node_groups.get(BlenderMaterials.__getGroupName(name))
+                if group is not None:
+                    BlenderMaterials.__sizeTextures(group, textureType, textureScale, unit)
 
         # The node groups may already exist (e.g. from a previous import), so make sure they scatter light by the
         # current amount (groups made by older versions turned it off in Lego Standard)
@@ -5589,7 +5634,7 @@ def addModifiers(ob):
     if Options.addBevelModifier:
         bevelModifier = ob.modifiers.new("Bevel", type='BEVEL')
         bevelModifier.width = Options.bevelWidth * globalScaleFactor
-        bevelModifier.segments = 4
+        bevelModifier.segments = Options.bevelSegments
         bevelModifier.profile = 0.5
         bevelModifier.limit_method = 'WEIGHT'
         # Each edge's bevel weight already keeps its bevel from overlapping (see safeBevelWeights), whereas
