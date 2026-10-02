@@ -5894,6 +5894,93 @@ def setupLineset(lineset, thickness, group):
     lineset.linestyle.thickness = thickness
 
 # **************************************************************************************
+def worldBackgroundNode(nodes, links):
+    """The Background node that the world's output uses, making them if they are missing"""
+    output = next((node for node in nodes if node.type == 'OUTPUT_WORLD' and node.is_active_output), None) or \
+             next((node for node in nodes if node.type == 'OUTPUT_WORLD'), None)
+    if output is None:
+        output = nodes.new('ShaderNodeOutputWorld')
+        output.location = (300, 300)
+
+    surface = output.inputs['Surface']
+    if surface.is_linked and surface.links[0].from_node.type == 'BACKGROUND':
+        return surface.links[0].from_node
+
+    background = next((node for node in nodes if node.type == 'BACKGROUND'), None)
+    if background is None:
+        background = nodes.new('ShaderNodeBackground')
+        background.location = (100, 300)
+    links.new(background.outputs['Background'], surface)
+    return background
+
+# **************************************************************************************
+def loadEnvironmentImage():
+    """
+    The image lighting the realistic look (background.exr, next to this file), or None if it is missing or can't be
+    read (e.g. the add-on came from a copy of the repository without Git LFS, which leaves a small text file in its
+    place). An unreadable image would render as bright purple, Blender's colour for a missing image.
+    """
+    path = os.path.join(Options.scriptDirectory, "background.exr")
+    image = None
+    if os.path.isfile(path):
+        try:
+            image = bpy.data.images.load(path, check_existing=True)
+            if image.size[0] == 0 or image.size[1] == 0:
+                if image.users == 0:
+                    bpy.data.images.remove(image)
+                image = None
+        except RuntimeError:
+            image = None
+    if image is None:
+        printWarningOnce("The environment image '{0}' is missing or can't be read, so a simple studio light is used instead".format(path))
+    return image
+
+# The studio light used in place of background.exr: (height, brightness), where height is from -1 (straight down) to
+# 1 (straight up). Like the image, it is dark below the horizon, with the light coming from softboxes above
+studioLight = ((0.0, 0.03), (0.47, 0.03), (0.5, 0.08), (0.57, 0.6), (0.62, 1.1), (0.85, 1.1), (0.95, 0.4), (1.0, 0.1))
+
+def addStudioLight(nodes, links):
+    """
+    A simple, soft, neutral studio light for the world (used when background.exr can't be loaded): brightness
+    depending on the height of the direction. Returns its output node (named 'LegoEnvMap', like the image's node).
+    """
+    coordinates = nodes.new('ShaderNodeTexCoord')
+    coordinates.location = (-850, 300)
+    coordinates.name = "LegoStudioCoordinates"
+
+    separate = nodes.new('ShaderNodeSeparateXYZ')
+    separate.location = (-650, 300)
+    separate.name = "LegoStudioHeight"
+    links.new(coordinates.outputs['Generated'], separate.inputs[0])
+
+    toFactor = nodes.new('ShaderNodeMath')
+    toFactor.operation = 'MULTIPLY_ADD'
+    toFactor.inputs[1].default_value = 0.5
+    toFactor.inputs[2].default_value = 0.5
+    toFactor.location = (-470, 300)
+    toFactor.name = "LegoStudioFactor"
+    links.new(separate.outputs['Z'], toFactor.inputs[0])
+
+    ramp = nodes.new('ShaderNodeValToRGB')
+    ramp.location = (-300, 300)
+    ramp.name = "LegoEnvMap"
+    elements = ramp.color_ramp.elements
+    while len(elements) > 1:
+        elements.remove(elements[-1])
+    warmth = (1.0, 1.0, 0.88)
+    for i, (position, brightness) in enumerate(studioLight):
+        element = elements[0] if i == 0 else elements.new(position)
+        element.position = position
+        element.color = (brightness * warmth[0], brightness * warmth[1], brightness * warmth[2], 1.0)
+    links.new(toFactor.outputs[0], ramp.inputs['Fac'])
+    return ramp
+
+def removeStudioLight(nodes):
+    for name in ("LegoEnvMap", "LegoStudioCoordinates", "LegoStudioHeight", "LegoStudioFactor"):
+        if name in nodes:
+            nodes.remove(nodes[name])
+
+# **************************************************************************************
 def setupRealisticLook():
     scene = bpy.context.scene
     render = scene.render
@@ -5912,17 +5999,36 @@ def setupRealisticLook():
         links = scene.world.node_tree.links
         worldNodeNames = [node.name for node in scene.world.node_tree.nodes]
 
+        environmentImage = loadEnvironmentImage()
+
+        # The world may already be lit by an earlier import (e.g. the file was saved, or this is a second import)
+        existing = nodes.get("LegoEnvMap")
+        if existing is not None:
+            if existing.type == 'TEX_ENVIRONMENT':
+                if environmentImage is not None:
+                    existing.image = environmentImage
+                else:
+                    # (its image is missing now, so it would render purple)
+                    nodes.remove(existing)
+            elif environmentImage is not None:
+                # (a studio light made when the image was missing is replaced, now the image is there)
+                removeStudioLight(nodes)
+            worldNodeNames = [node.name for node in nodes]
+
         if "LegoEnvMap" in worldNodeNames:
             env_tex = nodes["LegoEnvMap"]
-        else:
+        elif environmentImage is not None:
             env_tex          = nodes.new('ShaderNodeTexEnvironment')
             env_tex.location = (-250, 300)
             env_tex.name     = "LegoEnvMap"
-            env_tex.image    = bpy.data.images.load(Options.scriptDirectory + "/background.exr", check_existing=True)
+            env_tex.image    = environmentImage
+        else:
+            env_tex = addStudioLight(nodes, links)
 
-        if "Background" in worldNodeNames:
-            background = nodes["Background"]
-            links.new(env_tex.outputs[0],background.inputs[0])
+        # Light the world with it, through its Background node (found by type, since it may have been renamed, or
+        # have a translated name; made if there isn't one)
+        background = worldBackgroundNode(nodes, links)
+        links.new(env_tex.outputs[0], background.inputs['Color'])
     else:
         scene.world.color = (1.0, 1.0, 1.0)
 
