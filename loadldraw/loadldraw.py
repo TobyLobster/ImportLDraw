@@ -38,6 +38,7 @@ import glob
 import bpy
 import datetime
 import struct
+import hashlib
 import re
 import bmesh
 import copy
@@ -676,6 +677,9 @@ class LegoColours:
 
     colours = {}
 
+    # The kinds of FABRIC finish (see https://www.ldraw.org/article/299)
+    fabricTypes = ("VELVET", "CANVAS", "STRING", "FUR")
+
     def __getValue(line, value):
         """Parses a colour value from the ldConfig.ldr file"""
         if value in line:
@@ -846,10 +850,98 @@ class LegoColours:
             except ValueError:
                 continue
 
+    def parseColourDefinition(line_split):
+        """
+        Parses a colour definition line, '0 !COLOUR name CODE c VALUE v EDGE e [ALPHA a] [LUMINANCE l] [finish]'
+        (from LDConfig.ldr, or from inside a model, see https://www.ldraw.org/article/299). Returns (code, colour),
+        or None if the line can't be read.
+        """
+        try:
+            name = line_split[2]
+            code = int(LegoColours.__getValue(line_split, "CODE"))
+            value = LegoColours.__getValue(line_split, "VALUE")
+            linearRGBA = LegoColours.hexDigitsToLinearRGBA(value[1:] if value.startswith("#") else value, 1.0)
+        except (IndexError, TypeError, ValueError, AttributeError):
+            return None
+
+        colour = {
+            "name": name,
+            "colour": linearRGBA[0:3],
+            "alpha": linearRGBA[3],
+            "luminance": 0.0,
+            "material": "BASIC"
+        }
+
+        try:
+            if "ALPHA" in line_split:
+                colour["alpha"] = int(LegoColours.__getValue(line_split, "ALPHA")) / 255.0
+
+            if "LUMINANCE" in line_split:
+                colour["luminance"] = int(LegoColours.__getValue(line_split, "LUMINANCE"))
+        except (TypeError, ValueError):
+            pass
+
+        if "CHROME" in line_split:
+            colour["material"] = "CHROME"
+
+        if "PEARLESCENT" in line_split:
+            colour["material"] = "PEARLESCENT"
+
+        if "RUBBER" in line_split:
+            colour["material"] = "RUBBER"
+
+        if "METAL" in line_split:
+            colour["material"] = "METAL"
+
+        if "MATERIAL" in line_split:
+            subline = line_split[line_split.index("MATERIAL"):]
+
+            colour["material"]         = LegoColours.__getValue(subline, "MATERIAL")
+
+            # 'MATERIAL FABRIC [VELVET | CANVAS | STRING | FUR]' (no type means the cloth of a minifig cape)
+            if colour["material"] == "FABRIC":
+                fabricType = subline[2].upper() if len(subline) > 2 else ""
+                colour["fabric"] = fabricType if fabricType in LegoColours.fabricTypes else ""
+
+            # Note, not all finishes have a secondary value
+            finishValue                    = LegoColours.__getValue(subline, "VALUE")
+            if finishValue is not None:
+                hexDigits                  = finishValue[1:]
+                colour["secondary_colour"] = LegoColours.hexDigitsToLinearRGBA(hexDigits, 1.0)
+
+            colour["fraction"]         = LegoColours.__getValue(subline, "FRACTION")
+            colour["vfraction"]        = LegoColours.__getValue(subline, "VFRACTION")
+            colour["size"]             = LegoColours.__getValue(subline, "SIZE")
+            colour["minsize"]          = LegoColours.__getValue(subline, "MINSIZE")
+            colour["maxsize"]          = LegoColours.__getValue(subline, "MAXSIZE")
+
+        return (code, colour)
+
+    # Colours defined inside model (or part) files, by the name they are given (see addLocalColour)
+    localColours = {}
+
+    def addLocalColour(colour, line_split):
+        """
+        Stores a colour defined by a '0 !COLOUR' line inside a file, and returns the name used for it in place of its
+        code. The name is the colour's own name plus a short code made from its definition, so the same definition
+        always gets the same name (and material), and a different one never does.
+        """
+        definition = " ".join(line_split[2:])
+        localName = "{0}_{1}".format(colour["name"], hashlib.md5(definition.encode("utf-8")).hexdigest()[:6])
+        LegoColours.localColours[localName] = colour
+        return localName
+
+    def mapColour(colourName, colourMap):
+        """The colour that colourName stands for, given the colours defined further up (a dict code -> name)"""
+        if colourMap:
+            return colourMap.get(colourName, colourName)
+        return colourName
+
     def __readColourTable():
         """Reads the colour values from the LDConfig.ldr file. For details of the
         Ldraw colour system see: http://www.ldraw.org/article/547"""
         LegoColours.colours = {}
+        LegoColours.localColours = {}
 
         if Options.useColourScheme == "alt":
             configFilename = "LDCfgalt.ldr"
@@ -865,60 +957,10 @@ class LegoColours:
         for line in ldconfig_lines:
             if len(line) > 3:
                 if line[2:4].lower() == '!c':
-                    line_split = line.split()
-
-                    name = line_split[2]
-                    code = int(line_split[4])
-                    linearRGBA = LegoColours.hexDigitsToLinearRGBA(line_split[6][1:], 1.0)
-
-                    colour = {
-                        "name": name,
-                        "colour": linearRGBA[0:3],
-                        "alpha": linearRGBA[3],
-                        "luminance": 0.0,
-                        "material": "BASIC"
-                    }
-
-                    if "ALPHA" in line_split:
-                        colour["alpha"] = int(LegoColours.__getValue(line_split, "ALPHA")) / 255.0
-
-                    if "LUMINANCE" in line_split:
-                        colour["luminance"] = int(LegoColours.__getValue(line_split, "LUMINANCE"))
-
-                    if "CHROME" in line_split:
-                        colour["material"] = "CHROME"
-
-                    if "PEARLESCENT" in line_split:
-                        colour["material"] = "PEARLESCENT"
-
-                    if "RUBBER" in line_split:
-                        colour["material"] = "RUBBER"
-
-                    if "METAL" in line_split:
-                        colour["material"] = "METAL"
-
-                    if "MATERIAL" in line_split:
-                        subline = line_split[line_split.index("MATERIAL"):]
-
-                        colour["material"]         = LegoColours.__getValue(subline, "MATERIAL")
-
-                        # current `FABRIC [VELVET | CANVAS | STRING | FUR]` is not yet supported.
-                        if colour["material"] == "FABRIC":
-                            debugPrint(f"Unsupported material finish: {colour['material']} for [colour: {name} code: {code}] in line: {subline}")
-
-                        # Note, not all finishes have a secondary value
-                        finishValue                    = LegoColours.__getValue(subline, "VALUE")
-                        if finishValue is not None:
-                            hexDigits                  = finishValue[1:]
-                            colour["secondary_colour"] = LegoColours.hexDigitsToLinearRGBA(hexDigits, 1.0)
-
-                        colour["fraction"]         = LegoColours.__getValue(subline, "FRACTION")
-                        colour["vfraction"]        = LegoColours.__getValue(subline, "VFRACTION")
-                        colour["size"]             = LegoColours.__getValue(subline, "SIZE")
-                        colour["minsize"]          = LegoColours.__getValue(subline, "MINSIZE")
-                        colour["maxsize"]          = LegoColours.__getValue(subline, "MAXSIZE")
-
-                    LegoColours.colours[code] = colour
+                    definition = LegoColours.parseColourDefinition(line.split())
+                    if definition is not None:
+                        code, colour = definition
+                        LegoColours.colours[code] = colour
 
         # Add any colours that LDConfig.ldr doesn't define (e.g. if it is out of date)
         LegoColours.__readStudioColourTable()
@@ -1877,6 +1919,7 @@ class LDrawNode:
         self.groupNames     = groupNames.copy()
         self.texmap         = None      # Texture active on the type 1 line that references this node
         self.hidden         = False     # LeoCAD marked this piece as hidden ('0 !LEOCAD PIECE HIDDEN')
+        self.colourScope    = None      # The colours defined ('0 !COLOUR') before the line that references this node
 
     def look_at(obj_camera, target, up_vector):
         bpy.context.view_layer.update()
@@ -1970,6 +2013,30 @@ class LDrawNode:
             return realColourName
         return colourName
 
+    def childColourMap(colourMap, child):
+        """The colours defined further up that apply inside the child: ours, and those defined before its line"""
+        if not child.colourScope:
+            return colourMap
+        if not colourMap:
+            return child.colourScope
+        combined = dict(colourMap)
+        combined.update(child.colourScope)
+        return combined
+
+    def colourMapCode(self, colourMap):
+        """
+        The part of colourMap that matters to this node's geometry, and a code for it to add to the mesh name
+        (since the same part comes out in different colours if a colour it uses is defined differently)
+        """
+        if not colourMap:
+            return (None, "")
+        used = self.file.usedColourCodes()
+        relevant = {code: name for code, name in colourMap.items() if code in used}
+        if not relevant:
+            return (None, "")
+        signature = repr(sorted(relevant.items()))
+        return (relevant, "_cm" + hashlib.md5(signature.encode("utf-8")).hexdigest()[:6])
+
     def printBFC(self, depth=0):
         # For debugging, displays BFC information
 
@@ -1985,7 +2052,7 @@ class LDrawNode:
         # If this is out of the ordinary, add a code that makes it a unique name to cache the mesh properly
         return "_{0}".format(index)
 
-    def getBlenderGeometry(self, realColourName, basename, parentMatrix=Math.identityMatrix, accumCull=True, accumInvert=False, texmap=None):
+    def getBlenderGeometry(self, realColourName, basename, parentMatrix=Math.identityMatrix, accumCull=True, accumInvert=False, texmap=None, colourMap=None):
         """
         Returns the geometry for the Blender Object at this node.
 
@@ -1997,18 +2064,21 @@ class LDrawNode:
         'texmap' is a texture that applies to this node from a file further up (e.g. a
         texture declared in a model on the line that uses this part), in this node's
         coordinates. It applies to any geometry that has no texture of its own.
+
+        'colourMap' has the colours defined further up ('0 !COLOUR'), as a dict code -> the name of the colour.
         """
 
         assert self.file is not None
+        colourMap, colourCode = self.colourMapCode(colourMap)
 
         accumCull = accumCull and self.bfcCull
         accumInvert = accumInvert != self.bfcInverted
 
-        ourColourName = LDrawNode.resolveColour(self.colourName, realColourName)
+        ourColourName = realColourName      # (the caller works out our colour, see createBlenderObjectsFromNode)
         code = LDrawNode.getBFCCode(accumCull, accumInvert, self.bfcCull, self.bfcInverted)
         textureCode = "_tx" + texmap.signature() if texmap is not None else ""
-        meshName = "Mesh_{0}_{1}{2}{3}".format(basename, ourColourName, code, textureCode)
-        key = (self.filename, ourColourName, accumCull, accumInvert, self.bfcCull, self.bfcInverted, textureCode)
+        meshName = "Mesh_{0}_{1}{2}{3}{4}".format(basename, ourColourName, code, textureCode, colourCode)
+        key = (self.filename, ourColourName, accumCull, accumInvert, self.bfcCull, self.bfcInverted, textureCode, colourCode)
         bakedGeometry = CachedGeometry.getCached(key)
         if bakedGeometry is None:
             combinedMatrix = parentMatrix @ self.matrix
@@ -2020,14 +2090,15 @@ class LDrawNode:
 
             # Replaces the default colour 16 in our faceColours list with a specific colour
             for faceInfo in bakedGeometry.faceInfo:
-                faceInfo.faceColour = LDrawNode.resolveColour(faceInfo.faceColour, ourColourName)
+                faceInfo.faceColour = LDrawNode.resolveColour(LegoColours.mapColour(faceInfo.faceColour, colourMap), ourColourName)
 
             # Append each child's geometry
             for child in self.file.childNodes:
                 assert child.file is not None
                 if not child.isBlenderObjectNode():
-                    childColourName = LDrawNode.resolveColour(child.colourName, ourColourName)
-                    childMeshName, bg = child.getBlenderGeometry(childColourName, basename, combinedMatrix, accumCull, accumInvert)
+                    childColourName = LDrawNode.resolveColour(LegoColours.mapColour(child.colourName, colourMap), ourColourName)
+                    childMeshName, bg = child.getBlenderGeometry(childColourName, basename, combinedMatrix, accumCull, accumInvert,
+                                                                 colourMap=LDrawNode.childColourMap(colourMap, child))
 
                     isStud = child.file.isStud
                     isStudLogo = child.file.isStudLogo
@@ -2291,6 +2362,23 @@ class LDrawFile:
             "studtente-logo.dat"    # TENTE
              )
 
+    def usedColourCodes(self):
+        """
+        The colour codes used in this file and the files it uses (not 16 or 24, which take the colour from further up).
+        A colour defined further up ('0 !COLOUR') only makes a difference to the geometry if it is one of these.
+        """
+        if self.__usedColourCodes is None:
+            self.__usedColourCodes = set()      # (in case a file uses itself)
+            codes = {faceInfo.faceColour for faceInfo in self.geometry.faceInfo}
+            for child in self.childNodes:
+                codes.add(child.colourName)
+                if child.file is not None:
+                    codes |= child.file.usedColourCodes()
+            codes.discard("16")
+            codes.discard("24")
+            self.__usedColourCodes = codes
+        return self.__usedColourCodes
+
     def isStudLogo(filename):
         """Is this file a stud logo?"""
 
@@ -2321,6 +2409,7 @@ class LDrawFile:
         self.isSubPartOrPrimitive = False   # The file says (or its folder implies) it is a subpart or primitive
         self.isShortcut       = False       # A library shortcut (an assembly of parts, e.g. 3829c01)
         self.category         = None        # From '0 !CATEGORY <category>' (e.g. 'Minifig Headwear')
+        self.__usedColourCodes = None
 
         isGrainySlopeAllowed = not self.isStud
 
@@ -2352,6 +2441,11 @@ class LDrawFile:
         # Texture mapping state (!TEXMAP). Each stack entry is [TexMap, inFallback].
         textureStack = []
         nextTexture = None
+
+        # Colours defined so far in this file ('0 !COLOUR' lines): code -> the name of the local colour. They apply
+        # from where they are defined to the end of the file, and to the subfiles used after that. (A new dict is
+        # made for each definition, so a subfile can keep the one that applies to it)
+        localColours = {}
 
         #debugPrint("Processing file {0}, isSubPart = {1}, found {2} lines".format(self.filename, self.isSubPart, len(self.lines)))
 
@@ -2451,6 +2545,16 @@ class LDrawFile:
                 if parameters[1] == "!LDCAD":
                     if parameters[2] == "GENERATED":
                         processingLSynthParts = True
+                if parameters[1] == "!COLOUR":
+                    line_split = line.strip().split()
+                    definition = LegoColours.parseColourDefinition(line_split)
+                    if definition is None:
+                        printWarningOnce("In file '{0}', the colour definition '{1}' could not be read".format(self.fullFilepath, line.strip()))
+                    else:
+                        code, colour = definition
+                        localColours = dict(localColours)
+                        localColours[str(code)] = LegoColours.addLocalColour(colour, line_split)
+
                 if parameters[1] == "!CATEGORY" and self.category is None:
                     self.category = " ".join(word for word in parameters[2:] if word) or None
 
@@ -2508,10 +2612,18 @@ class LDrawFile:
 
                 self.isModel = (not self.isPart) and (not self.isSubPart)
 
+                # A colour defined earlier in this file
+                if localColours and parameters[1] in localColours:
+                    parameters[1] = localColours[parameters[1]]
+
+                childCount = len(self.childNodes)
                 try:
                     bfcInvertNext, leocadPieceHidden = self.__parseLine(parameters, line, bfcInvertNext, bfcLocalCull, bfcWindingCCW,
                                                                         leocadPieceHidden, currentTexture, processingLSynthParts,
                                                                         currentGroupNames, isGrainySlopeAllowed)
+                    # The colours defined so far are passed down to the subfile
+                    if localColours and len(self.childNodes) > childCount:
+                        self.childNodes[-1].colourScope = localColours
                 except (ValueError, IndexError):
                     printWarningOnce("In file '{0}', the line '{1}' is not formatted correctly (ignoring).".format(self.fullFilepath, line.strip()))
                     bfcInvertNext = False
@@ -2581,9 +2693,25 @@ class BlenderMaterials:
         'Lego Milky White': (1.0, 0.05),
     }
 
+    # The fabric finishes:
+    #   (roughness, sheen weight, sheen roughness, weave (thread spacing in LDU, height in LDU) or None,
+    #    fibres (size in LDU, height in LDU) or None)
+    # The weave is a grid of threads, as in canvas. The fibres are a fine random roughness, as in felt or fur.
+    # (An LDU is 0.4 mm at real scale)
+    __fabrics = {
+        "":       (0.75, 0.5, 0.5, (0.8, 0.03), None),          # a minifig cape's cloth: fine, smooth weave
+        "CANVAS": (0.9,  0.3, 0.5, (1.2, 0.05), (0.4, 0.02)),   # coarser weave
+        "VELVET": (1.0,  1.0, 0.3, None,        (0.15, 0.02)),  # soft, with a sheen at glancing angles
+        "STRING": (0.85, 0.4, 0.5, None,        (0.6, 0.06)),   # fibres
+        "FUR":    (1.0,  1.0, 1.0, None,        (0.5, 0.25)),   # deep, fuzzy fibres
+    }
+
+    def __fabricGroupName(fabricType):
+        return "Lego Fabric" + (" " + fabricType.capitalize() if fabricType else "")
+
     # Node groups whose settings depend on the size of the model (Options.realScale). Each scale gets its own
     # groups and materials, so models imported into the same file at different scales all look right
-    __scaleDependentGroups = {'Slope Texture'} | set(__subsurface)
+    __scaleDependentGroups = {'Slope Texture'} | set(__subsurface) | set(map(__fabricGroupName, __fabrics))
 
     def __scaleSuffix():
         if Options.instructionsLook or Options.realScale == 1:
@@ -2653,6 +2781,8 @@ class BlenderMaterials:
                 BlenderMaterials.__createCyclesSpeckle(nodes, links, colour, col["secondary_colour"])
             elif col["material"] == "RUBBER":
                 BlenderMaterials.__createCyclesRubber(nodes, links, colour, col["alpha"])
+            elif col["material"] == "FABRIC":
+                BlenderMaterials.__createCyclesFabric(nodes, links, colour, col.get("fabric", ""))
             else:
                 BlenderMaterials.__createCyclesBasic(nodes, links, colour, col["alpha"], col["name"])
 
@@ -3348,6 +3478,15 @@ class BlenderMaterials:
 
         links.new(rubber.outputs[0], out.inputs[0])
 
+    def __createCyclesFabric(nodes, links, diffColour, fabricType):
+        """Fabric (cloth) material for the Cycles render engine"""
+        node = nodes.new('ShaderNodeGroup')
+        node.node_tree = BlenderMaterials.__createBlenderLegoFabricNodeGroup(fabricType)
+        node.location = 0, 5
+        node.inputs['Color'].default_value = diffColour
+        out = BlenderMaterials.__nodeOutput(nodes, 200, 0)
+        links.new(node.outputs['Shader'], out.inputs[0])
+
     def __createCyclesMilkyWhite(nodes, links, diffColour):
         """Milky White material for Cycles render engine."""
 
@@ -3364,6 +3503,10 @@ class BlenderMaterials:
 
     def __getColourData(colourName):
         """Get the colour data associated with the colour name"""
+
+        # A colour defined inside a file ('0 !COLOUR')
+        if colourName in LegoColours.localColours:
+            return LegoColours.localColours[colourName]
 
         # Try the LDraw defined colours
         if BlenderMaterials.__is_int(colourName):
@@ -4278,6 +4421,83 @@ class BlenderMaterials:
                 group.links.new(node_mixOne.outputs[0],   node_mixTwo.inputs[1])
                 group.links.new(node_glossy.outputs[0],   node_mixTwo.inputs[2])
                 group.links.new(node_mixTwo.outputs[0],   node_output.inputs[0])
+
+    # **********************************************************************************
+    def __createBlenderLegoFabricNodeGroup(fabricType):
+        """
+        Returns the node group for a fabric finish, making it if needed (only when a fabric colour is used).
+        Cloth: a rough, slightly sheeny surface, with a bump for the weave or the fibres. The bumps are measured in
+        the part's own coordinates, so the threads are the same size on every part (and follow the part around).
+        """
+        groupName = BlenderMaterials.__getGroupName(BlenderMaterials.__fabricGroupName(fabricType))
+        group = bpy.data.node_groups.get(groupName)
+        if group is None:
+            roughness, sheen, sheenRoughness, weave, fibres = BlenderMaterials.__fabrics[fabricType]
+            debugPrint("createBlenderLegoFabricNodeGroup #create " + groupName)
+            group, node_input, node_output = BlenderMaterials.__createGroup(groupName, -1200, 0, 300, 0, True)
+            BlenderMaterials.addInputSocket(group, 'NodeSocketColor', 'Color')
+            BlenderMaterials.addInputSocket(group, 'NodeSocketVectorDirection', 'Normal')
+            nodes = group.nodes
+            links = group.links
+
+            principled = BlenderMaterials.__nodePrincipled(nodes, 0.0, 0.0, 0.0, roughness, 0.0, 0.0, 1.45, 0.0, 0, 0)
+            principled.inputs['Specular IOR Level'].default_value = 0.25
+            principled.inputs['Sheen Weight'].default_value = sheen
+            principled.inputs['Sheen Roughness'].default_value = sheenRoughness
+            links.new(node_input.outputs['Color'], principled.inputs['Base Color'])
+            # (the sheen comes from the fibres, so it is their colour)
+            links.new(node_input.outputs['Color'], principled.inputs['Sheen Tint'])
+            links.new(principled.outputs['BSDF'], node_output.inputs['Shader'])
+
+            # The part's coordinates in LDU
+            texCoord = BlenderMaterials.__nodeTexCoord(nodes, -1100, -300)
+            inLDU = BlenderMaterials.__nodeVectorMath(nodes, 'SCALE', -900, -300)
+            inLDU.inputs['Scale'].default_value = 1.0 / globalScaleFactor
+            links.new(texCoord.outputs['Object'], inLDU.inputs[0])
+
+            normal = node_input.outputs['Normal']
+            x = -200
+            for pattern in (weave, fibres):
+                if pattern is None:
+                    continue
+                size, height = pattern
+                if pattern is weave:
+                    # Threads along each axis: |sin| ridges along x, y and z. On a face, the ridges along the two
+                    # axes in its plane cross to make the weave (the third is the same all over the face)
+                    toAngle = BlenderMaterials.__nodeVectorMath(nodes, 'SCALE', -700, -300)
+                    toAngle.inputs['Scale'].default_value = math.pi / size
+                    links.new(inLDU.outputs[0], toAngle.inputs[0])
+                    separate = nodes.new('ShaderNodeSeparateXYZ')
+                    separate.location = -550, -300
+                    links.new(toAngle.outputs[0], separate.inputs[0])
+                    ridges = []
+                    for axis in range(3):
+                        sine = BlenderMaterials.__nodeMath(nodes, 'SINE', -400, -200 - 150 * axis)
+                        links.new(separate.outputs[axis], sine.inputs[0])
+                        absolute = BlenderMaterials.__nodeMath(nodes, 'ABSOLUTE', -250, -200 - 150 * axis)
+                        links.new(sine.outputs[0], absolute.inputs[0])
+                        ridges.append(absolute)
+                    add1 = BlenderMaterials.__nodeMath(nodes, 'ADD', -100, -250)
+                    links.new(ridges[0].outputs[0], add1.inputs[0])
+                    links.new(ridges[1].outputs[0], add1.inputs[1])
+                    add2 = BlenderMaterials.__nodeMath(nodes, 'ADD', 0, -300)
+                    links.new(add1.outputs[0], add2.inputs[0])
+                    links.new(ridges[2].outputs[0], add2.inputs[1])
+                    heightOutput = add2.outputs[0]
+                else:
+                    noise = BlenderMaterials.__nodeNoiseTexture(nodes, 1.0 / size, 8, 0.0, -400, -700)
+                    links.new(inLDU.outputs[0], noise.inputs['Vector'])
+                    heightOutput = noise.outputs['Fac']
+
+                # (Distance is in the part's coordinates, so it follows the scale too)
+                bump = BlenderMaterials.__nodeBumpShader(nodes, 1.0, height * globalScaleFactor, x, -400)
+                links.new(heightOutput, bump.inputs['Height'])
+                if normal is not None:
+                    links.new(normal, bump.inputs['Normal'])
+                normal = bump.outputs['Normal']
+                x += 150
+            links.new(normal, principled.inputs['Normal'])
+        return group
 
     # **********************************************************************************
     def createBlenderNodeGroups():
@@ -5422,10 +5642,12 @@ def createBlenderObjectsFromNode(node,
                                  localToWorldSpaceMatrix=Math.identityMatrix,
                                  blenderNodeParent=None,
                                  texmap=None,
-                                 hidden=False):
+                                 hidden=False,
+                                 colourMap=None):
     """
     Creates a Blender Object for the node given and (recursively) for all it's children as required.
     'hidden' is True inside a piece (e.g. a submodel) that LeoCAD marked as hidden.
+    'colourMap' has the colours defined further up ('0 !COLOUR') that apply inside the node: code -> colour name.
     Creates and optimises the mesh for each object too.
     'texmap' is a texture from further up the hierarchy that applies to this node, in the node's coordinates.
     """
@@ -5442,8 +5664,10 @@ def createBlenderObjectsFromNode(node,
     hidden = hidden or node.hidden
 
     if node.isBlenderObjectNode():
-        ourColourName = LDrawNode.resolveColour(node.colourName, realColourName)
-        meshName, geometry = node.getBlenderGeometry(ourColourName, name, texmap=texmap)
+        # (the caller has worked out our colour: our colour code, or the colour it stands for if it is defined
+        # further up, or the caller's colour for 16)
+        ourColourName = realColourName
+        meshName, geometry = node.getBlenderGeometry(ourColourName, name, texmap=texmap, colourMap=colourMap)
         mesh, newMeshCreated = createMesh(name, meshName, geometry)
 
         # Format a name for the Blender Object
@@ -5616,14 +5840,15 @@ def createBlenderObjectsFromNode(node,
     # Create children and parent them
     for childNode in node.file.childNodes:
         # Create sub-objects recursively
-        childColourName = LDrawNode.resolveColour(childNode.colourName, realColourName)
+        childColourName = LDrawNode.resolveColour(LegoColours.mapColour(childNode.colourName, colourMap), realColourName)
 
         # A texture on the line that uses the child, or else one that applies to us, applies to the child
         childTexmap = childNode.texmap if childNode.texmap is not None else texmap
         if childTexmap is not None:
             childTexmap = childTexmap.transformed(childNode.matrix)
 
-        createBlenderObjectsFromNode(childNode, childNode.matrix, childNode.filename, childColourName, blenderParentTransform, localToWorldSpaceMatrix @ localMatrix, blenderNodeParent, childTexmap, hidden)
+        createBlenderObjectsFromNode(childNode, childNode.matrix, childNode.filename, childColourName, blenderParentTransform, localToWorldSpaceMatrix @ localMatrix, blenderNodeParent, childTexmap, hidden,
+                                     LDrawNode.childColourMap(colourMap, childNode))
 
     globalCurrentCollection = previousCollection
     return ob
