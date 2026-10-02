@@ -99,8 +99,19 @@ def deselectObject(ob):
     bpy.context.view_layer.objects.active = None
 
 # **************************************************************************************
-def addPlane(location, size):
-    bpy.ops.mesh.primitive_plane_add(size=size, enter_editmode=False, location=location)
+def addPlane(location, size, name):
+    """Adds a square plane to the current collection, without using an operator (which would update the whole scene)"""
+    half = size * 0.5
+    mesh = bpy.data.meshes.new("Plane")
+    mesh.from_pydata([(-half, -half, 0), (half, -half, 0), (-half, half, 0), (half, half, 0)], [], [(0, 1, 3, 2)])
+    uvs = mesh.uv_layers.new(name="UVMap")
+    for loop, uv in zip(uvs.data, ((0, 0), (1, 0), (1, 1), (0, 1))):
+        loop.uv = uv
+    mesh.update()
+    ob = bpy.data.objects.new(name, mesh)
+    ob.location = location
+    bpy.context.collection.objects.link(ob)
+    return ob
 
 # **************************************************************************************
 def useDenoising(scene, useDenoising):
@@ -4680,28 +4691,18 @@ def addSharpEdges(bm, ob, geometry, filename, joinTJunctions=False):
             kd.insert(v.co, i)
         kd.balance()
 
-        # Create edgeIndices dictionary, which is the list of edges as pairs of indicies into our bm.verts array
-        edgeIndices = {}
-        for ind, geomEdge in enumerate(geometry.edges):
-            # Find index of nearest points in bm.verts to geomEdge[0] and geomEdge[1]
-            edges0 = [index for (co, index, dist) in kd.find_range(geomEdge[0], epsilon)]
-            edges1 = [index for (co, index, dist) in kd.find_range(geomEdge[1], epsilon)]
-
-            #if (len(edges0) > 2):
-            #    printWarningOnce("Found {1} vertices near {0} in file {2}".format(geomEdge[0], len(edges0), filename))
-            #if (len(edges1) > 2):
-            #    printWarningOnce("Found {1} vertices near {0} in file {2}".format(geomEdge[1], len(edges1), filename))
-
-            for e0 in edges0:
-                for e1 in edges1:
-                    edgeIndices[(e0, e1)] = True
-                    edgeIndices[(e1, e0)] = True
-
-        # The mesh edges between the ends of an edge line
+        # The mesh edges between the ends of an edge line (between a vertex near one end and a vertex near the other)
         sharpEdges = set()
-        for meshEdge in bm.edges:
-            if (meshEdge.verts[0].index, meshEdge.verts[1].index) in edgeIndices:
-                sharpEdges.add(meshEdge.index)
+        for geomEdge in geometry.edges:
+            near0 = [index for (co, index, dist) in kd.find_range(geomEdge[0], epsilon)]
+            if not near0:
+                continue
+            near1 = {index for (co, index, dist) in kd.find_range(geomEdge[1], epsilon)}
+            for index in near0:
+                vert = bm.verts[index]
+                for meshEdge in vert.link_edges:
+                    if meshEdge.other_vert(vert).index in near1:
+                        sharpEdges.add(meshEdge.index)
 
         # Also the mesh edges along an edge line that the faces split into several mesh edges (issue #29)
         lines = [(geomEdge[0], geomEdge[1]) for geomEdge in geometry.edges]
@@ -5007,8 +5008,6 @@ def setupImplicitParents():
     if not partsHierarchy:
         return
 
-    bpy.context.view_layer.update()
-
     childParts = set()
     for attachPoints, children in partsHierarchy.values():
         childParts |= children
@@ -5037,6 +5036,8 @@ def setupImplicitParents():
 
     if not parentObjects or not childObjects:
         return
+
+    bpy.context.view_layer.update()
 
     tolerance = globalScaleFactor * 5 # in LDraw units
     squaredTolerance = tolerance * tolerance
@@ -5221,24 +5222,17 @@ def addModifiers(ob):
 
 # **************************************************************************************
 def smoothShadingAndFreestyleEdges(ob):
-    # We would like to avoid using bpy.ops functions altogether since it
-    # slows down progressively as more objects are added to the scene, but
-    # we have no choice but to use it here (a) for smoothing and (b) for
-    # marking freestyle edges (no bmesh options exist currently). To minimise
-    # the performance drop, we add one object only to the scene, smooth it,
-    # then remove it again. Only at the end of the import process are all the
-    # objects properly added to the scene.
-
-    # Temporarily add object to scene
-    linkToScene(ob)
-
-    # Select object
-    selectObject(ob)
+    # (Set directly on the mesh: the Shade Smooth operator needed the object in the scene and selected, and
+    # operators get slower as the scene grows)
 
     # Smooth shading
-    if Options.smoothShading:
-        # Smooth the mesh
-        bpy.ops.object.shade_smooth()
+    if Options.smoothShading and len(ob.data.polygons) > 0:
+        ob.data.polygons.foreach_set("use_smooth", [True] * len(ob.data.polygons))
+        # (Since Blender 4.1 flat faces are stored as a 'sharp_face' attribute, which is now all False, so as
+        # Shade Smooth does, the attribute is removed)
+        sharpFaces = ob.data.attributes.get("sharp_face")
+        if sharpFaces is not None:
+            ob.data.attributes.remove(sharpFaces)
 
     if Options.instructionsLook:
         # Mark all sharp edges as freestyle edges
@@ -5255,12 +5249,6 @@ def smoothShadingAndFreestyleEdges(ob):
                 if attr is None:
                     attr = me.attributes.new("freestyle_edge", 'BOOLEAN', 'EDGE')
                 attr.data.foreach_set("value", sharp)
-
-    # Deselect object
-    deselectObject(ob)
-
-    # Remove object from scene
-    unlinkFromScene(ob)
 
 
 # **************************************************************************************
@@ -6350,7 +6338,7 @@ def loadFromFile(context, filename, isFullFilepath=True):
     # Add ground plane with white material
     if Options.addGroundPlane and not Options.instructionsLook:
         if "LegoGroundPlane" not in sceneObjectNames:
-            addPlane((0,0,0), 100000 * globalScaleFactor)
+            groundPlane = addPlane((0,0,0), 100000 * globalScaleFactor, "LegoGroundPlane")
 
             blenderName = "Mat_LegoGroundPlane"
             # Reuse current material if it exists, otherwise create a new material
@@ -6378,12 +6366,7 @@ def loadFromFile(context, filename, isFullFilepath=True):
             out.location = 200, 0
             links.new(node.outputs[0], out.inputs[0])
 
-            for obj in bpy.context.selected_objects:
-                obj.name = "LegoGroundPlane"
-                if obj.data.materials:
-                    obj.data.materials[0] = material
-                else:
-                    obj.data.materials.append(material)
+            groundPlane.data.materials.append(material)
 
     # Set to render at full resolution
     if Options.setRenderSettings:
