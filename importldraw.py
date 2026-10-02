@@ -293,6 +293,12 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         default=prefs.get("bevelWidth", 0.5)
     )
 
+    bakeBevels: BoolProperty(
+        name="Bake bevels",
+        description="Applies the bevels (and the edge splitting used for smoothing) to each part's mesh, which all parts of that kind share, instead of adding modifiers to every part. This uses far less memory and time for big models, but the bevels can't be adjusted after import. (Only used when bevelling edges, so not with the Instructions Look)",
+        default=prefs.get("bakeBevels", True)
+    )
+
     addEnvironment: BoolProperty(
         name="Add Environment",
         description="Adds a ground plane and environment texture (for realistic look only)",
@@ -333,6 +339,9 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         box.prop(self, "smoothParts")
         box.prop(self, "bevelEdges")
         box.prop(self, "bevelWidth")
+        row = box.row()
+        row.enabled = self.bevelEdges and self.look != "instructions"
+        row.prop(self, "bakeBevels")
         box.prop(self, "addGaps")
         box.prop(self, "gapWidthMM")
         box.prop(self, "curvedWalls")
@@ -368,6 +377,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("smoothShading",         self.smoothParts)
         ImportLDrawOps.prefs.set("bevelEdges",            self.bevelEdges)
         ImportLDrawOps.prefs.set("bevelWidth",            self.bevelWidth)
+        ImportLDrawOps.prefs.set("bakeBevels",            self.bakeBevels)
         ImportLDrawOps.prefs.set("useLook",               self.look)
         ImportLDrawOps.prefs.set("useColourScheme",       self.colourScheme)
         ImportLDrawOps.prefs.set("defaultColour",         self.defaultColour)
@@ -426,6 +436,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.Options.overwriteExistingMeshes    = False
         loadldraw.Options.addBevelModifier           = self.bevelEdges and not loadldraw.Options.instructionsLook
         loadldraw.Options.bevelWidth                 = self.bevelWidth
+        loadldraw.Options.bakeBevels                 = self.bakeBevels
         loadldraw.Options.addWorldEnvironmentTexture = self.addEnvironment
         loadldraw.Options.addGroundPlane             = self.addEnvironment
         loadldraw.Options.positionCamera             = self.positionCamera

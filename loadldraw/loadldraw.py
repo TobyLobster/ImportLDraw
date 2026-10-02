@@ -210,6 +210,7 @@ class Options:
 
     addBevelModifier   = True           # Adds a bevel modifier to each part (for rounded edges)
     bevelWidth         = 0.5            # Width of bevel
+    bakeBevels         = True           # The bevel and edge split are applied to each part's mesh, which all instances share, rather than being modifiers on every object (uses far less memory for big models)
 
     addWorldEnvironmentTexture = True   # Add an environment texture
     addGroundPlane = True               # Add a ground plane
@@ -250,6 +251,8 @@ class Options:
                          str(Options.LSynthDirectory),
                          str(Options.studLogoDirectory),
                          str(Options.resolveAmbiguousNormals),
+                         str(Options.edgeSplit),
+                         str(bakingModifiers()),
                          str(Options.addBevelModifier),
                          str(Options.useTextures),
                          str(Options.bevelWidth)])
@@ -3372,6 +3375,8 @@ class BlenderMaterials:
                 # Repair materials made by earlier versions (see __linkUnconnectedNormals)
                 if material.node_tree is not None:
                     BlenderMaterials.__linkUnconnectedNormals(material.node_tree.nodes, material.node_tree.links)
+                # (cached, so this is only done once, not for every face)
+                BlenderMaterials.__material_list[colourName] = material
                 return material
 
         # Create new material
@@ -5200,6 +5205,68 @@ def createMesh(name, meshName, geometry):
     return (mesh, newMeshCreated)
 
 # **************************************************************************************
+def bakingModifiers():
+    """
+    True if the modifiers are baked into the meshes (see bakeModifiers). Only done when there are bevels: without
+    them (e.g. the instructions look) there's just the Edge Split modifier, which is cheap, so it's left as it was
+    """
+    return Options.bakeBevels and Options.addBevelModifier
+
+# **************************************************************************************
+bakeSceneName = "ImportLDraw Bake"
+
+def bakeScene():
+    """The (empty) scene in which bakeModifiers evaluates the modifiers"""
+    scene = bpy.data.scenes.get(bakeSceneName)
+    if scene is None:
+        scene = bpy.data.scenes.new(bakeSceneName)
+    return scene
+
+def removeBakeScene():
+    scene = bpy.data.scenes.get(bakeSceneName)
+    if scene is not None:
+        bpy.data.scenes.remove(scene)
+
+# **************************************************************************************
+def bakeModifiers(mesh):
+    """
+    Applies the bevel and edge split modifiers to the mesh itself (Options.bakeBevels). Blender evaluates modifiers
+    separately for every object, keeping a copy of the result for each, even when the objects share a mesh. So a
+    model with a thousand bricks of the same kind holds a thousand bevelled copies. Applying them to the shared
+    mesh instead means one copy per part.
+    """
+    if not (Options.addBevelModifier or Options.edgeSplit) or len(mesh.polygons) == 0:
+        return
+
+    # Evaluate the modifiers on a temporary object, in a scene of its own. (Evaluating it in the user's scene
+    # would update everything in the scene each time, which is slow when the scene already holds a model)
+    scene = bakeScene()
+    temporary = bpy.data.objects.new("ImportLDrawBake", mesh)
+    scene.collection.objects.link(temporary)
+    try:
+        addModifiers(temporary)
+        with bpy.context.temp_override(scene=scene, view_layer=scene.view_layers[0]):
+            depsgraph = bpy.context.evaluated_depsgraph_get()
+        evaluated = temporary.evaluated_get(depsgraph)
+        result = evaluated.to_mesh()
+        bm = bmesh.new()
+        bm.from_mesh(result)
+        evaluated.to_mesh_clear()
+    finally:
+        scene.collection.objects.unlink(temporary)
+        bpy.data.objects.remove(temporary)
+
+    # Replace the mesh's geometry with the result (the mesh keeps its name, materials and properties)
+    bm.to_mesh(mesh)
+    bm.free()
+
+    # (the bevel weights have done their job, and would double the bevel if a Bevel modifier is added later)
+    bevelWeights = mesh.attributes.get("bevel_weight_edge")
+    if bevelWeights is not None:
+        mesh.attributes.remove(bevelWeights)
+    mesh.update()
+
+# **************************************************************************************
 def addModifiers(ob):
     global globalScaleFactor
 
@@ -5436,7 +5503,9 @@ def createBlenderObjectsFromNode(node,
         if (Options.positionObjectOnGroundAtOrigin or Options.positionCamera) and not hidden:
             if mesh and mesh.vertices:
                 localTransform = localToWorldSpaceMatrix @ localMatrix
-                points = [localTransform @ p.co for p in mesh.vertices]
+                # (only the corners of the part's convex hull: the camera and ground position only depend on those,
+                # and keeping every vertex of every part takes a lot of memory for big models)
+                points = [localTransform @ p for p in meshHullPoints(mesh)]
 
                 # Remember all the points
                 globalPoints.extend(points)
@@ -5445,9 +5514,12 @@ def createBlenderObjectsFromNode(node,
         if node.file.isStud:
             ob.hide_select = True
 
-        # Add bevel and edge split modifiers as needed
+        # Add bevel and edge split modifiers as needed (or apply them to a new mesh, which all its instances share)
         if mesh:
-            addModifiers(ob)
+            if not bakingModifiers():
+                addModifiers(ob)
+            elif newMeshCreated:
+                bakeModifiers(mesh)
 
     else:
         blenderParentTransform = blenderParentTransform @ localMatrix
@@ -5786,6 +5858,21 @@ def setupInstructionsLook():
         transWhiteLineset = layers[transLayer].freestyle_settings.linesets[-1]
         setupLineset(transWhiteLineset, 2, 'White Edged Bricks Collection')
 
+    # A lineset made by an earlier import loses its collection if the collection was removed (e.g. by an import
+    # with the realistic look), and then draws lines on every brick, so the collections are set again
+    for lineset, group in ((solidBlackLineset, 'Black Edged Bricks Collection'),
+                           (solidWhiteLineset, 'White Edged Bricks Collection'),
+                           (transBlackLineset, 'Black Edged Bricks Collection'),
+                           (transWhiteLineset, 'White Edged Bricks Collection')):
+        lineset.select_by_collection = True
+        lineset.collection = bpy.data.collections.get(group)
+
+    # The ground plane from an import with the realistic look isn't wanted here, and it makes Freestyle very slow
+    # (it's huge, so Freestyle's grid for finding hidden lines is far too coarse for the bricks)
+    groundPlane = scene.objects.get("LegoGroundPlane")
+    if groundPlane is not None:
+        groundPlane.hide_render = True
+
     # Create Compositing Nodes
     scene.use_nodes = True
     if hasattr(scene, "compositing_node_group"):
@@ -6002,6 +6089,28 @@ def iterateCameraPosition(camera, render, vcentre3d, moveCamera):
         camera.location += mathutils.Vector((offset3d.x, offset3d.y, offset3d.z))
         return offset3d.length
     return 0.0
+
+# **************************************************************************************
+def meshHullPoints(mesh):
+    """
+    The corners of the convex hull of the mesh's vertices. They are worked out once for each mesh, and kept with it
+    (so they are from before any bevels are baked into it, and are there when the mesh is reused).
+    """
+    flat = mesh.get("ldrawHullPoints")
+    if flat is None:
+        coords = [v.co.copy() for v in mesh.vertices]
+        if len(coords) > 4:
+            bm = bmesh.new()
+            for co in coords:
+                bm.verts.new(co)
+            result = bmesh.ops.convex_hull(bm, input=bm.verts, use_existing_faces=False)
+            hull = [vert.co.copy() for vert in result["geom"] if isinstance(vert, bmesh.types.BMVert)]
+            bm.free()
+            if hull:
+                coords = hull
+        flat = [c for co in coords for c in co]
+        mesh["ldrawHullPoints"] = flat
+    return [mathutils.Vector(flat[i:i + 3]) for i in range(0, len(flat), 3)]
 
 # **************************************************************************************
 def getConvexHull(minPoints = 3):
@@ -6300,6 +6409,9 @@ def loadFromFile(context, filename, isFullFilepath=True):
             if (lampVector.length < 0.001):
                 unlinkFromScene(light)
 
+    # All the parts are made, so the scene used for baking is no longer needed
+    removeBakeScene()
+
     # Finally add each object to the scene
     debugPrint("Adding {0} objects to scene".format(len(globalObjectsToAdd)))
     for ob in globalObjectsToAdd:
@@ -6337,7 +6449,10 @@ def loadFromFile(context, filename, isFullFilepath=True):
 
     # Add ground plane with white material
     if Options.addGroundPlane and not Options.instructionsLook:
-        if "LegoGroundPlane" not in sceneObjectNames:
+        if "LegoGroundPlane" in sceneObjectNames:
+            # (it may have been hidden from renders by an import with the instructions look)
+            scene.objects["LegoGroundPlane"].hide_render = False
+        else:
             groundPlane = addPlane((0,0,0), 100000 * globalScaleFactor, "LegoGroundPlane")
 
             blenderName = "Mat_LegoGroundPlane"

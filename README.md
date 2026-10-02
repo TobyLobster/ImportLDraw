@@ -31,6 +31,7 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 + Studs can include the **LEGO logo** on them, adding extra geometry.
 + **Gaps between bricks** - Optionally adds a small space between each brick, as in real life.
 + **Smart face smoothing** - Uses Edge-Split Modifier and Sharp Edges derived from Ldraw lines, for smooth curved surfaces and sharp corners.
++ **Rounded edges** - Optionally bevels the edges of each part, each edge as wide as fits, so detailed parts round off cleanly. By default the bevels are baked into each part's shared mesh, which uses far less memory for big models; untick *Bake bevels* to keep them as Bevel modifiers you can adjust after import.
 + **Concave walls** - Optionally look as if each brick has very slightly concave walls (with the photorealistic renderer), which affects the look of light reflections.
 + **Light bricks** - Bricks that emit light are supported.
 + **Parenting Minifigs** - Optionally make the parts of a minifig parented to each other, so e.g. rotating an arm also moves the hand with it.
