@@ -2698,14 +2698,16 @@ class BlenderMaterials:
     # The fabric finishes:
     #   (roughness, sheen weight, sheen roughness, weave (thread spacing in LDU, height in LDU) or None,
     #    fibres (size in LDU, height in LDU) or None)
-    # The weave is a grid of threads, as in canvas. The fibres are a fine random roughness, as in felt or fur.
+    # The weave is a grid of threads at 45 degrees to the part's axes, as in canvas. The fibres are a fine random
+    # roughness, as in felt or fur.
     # (An LDU is 0.4 mm at real scale)
     __fabrics = {
-        "":       (0.75, 0.5, 0.5, (0.8, 0.03), None),          # a minifig cape's cloth: fine, smooth weave
+        "":       (0.75, 0.5, 0.5, None,        (0.2, 0.05)),   # a minifig cape's cloth: fine and smooth, no visible weave
         "CANVAS": (0.9,  0.3, 0.5, (1.2, 0.05), (0.4, 0.02)),   # coarser weave
-        "VELVET": (1.0,  1.0, 0.3, None,        (0.15, 0.02)),  # soft, with a sheen at glancing angles
-        "STRING": (0.85, 0.4, 0.5, None,        (0.6, 0.06)),   # fibres
-        "FUR":    (1.0,  1.0, 1.0, None,        (0.5, 0.25)),   # deep, fuzzy fibres
+        "VELVET": (1.0,  1.0, 0.3, None,        (0.7, 0.5)),    # soft, with a sheen at glancing angles
+        "STRING": (0.85, 0.4, 0.5, (0.8, 0.12), (0.25, 0.02)),  # braided: on a string (a thin cylinder) the weave makes
+                                                                # strands crossing diagonally around it
+        "FUR":    (1.0,  1.0, 1.0, None,        (0.4, 1)),      # deep, fuzzy fibres
     }
 
     def __fabricGroupName(fabricType):
@@ -4461,6 +4463,12 @@ class BlenderMaterials:
                 group.links.new(node_mixTwo.outputs[0],   node_output.inputs[0])
 
     # **********************************************************************************
+    # Increase this when the fabric node groups change, so groups made by an earlier version are rebuilt
+    __fabricVersion = 3
+
+    # How much darker the gaps between the threads of a weave are
+    __weaveShading = 0.3
+
     def __createBlenderLegoFabricNodeGroup(fabricType):
         """
         Returns the node group for a fabric finish, making it if needed (only when a fabric colour is used).
@@ -4469,72 +4477,147 @@ class BlenderMaterials:
         """
         groupName = BlenderMaterials.__getGroupName(BlenderMaterials.__fabricGroupName(fabricType))
         group = bpy.data.node_groups.get(groupName)
+        if group is not None and group.get("ImportLDraw fabric version") == BlenderMaterials.__fabricVersion:
+            return group
+
+        roughness, sheen, sheenRoughness, weave, fibres = BlenderMaterials.__fabrics[fabricType]
+        debugPrint("createBlenderLegoFabricNodeGroup #create " + groupName)
         if group is None:
-            roughness, sheen, sheenRoughness, weave, fibres = BlenderMaterials.__fabrics[fabricType]
-            debugPrint("createBlenderLegoFabricNodeGroup #create " + groupName)
             group, node_input, node_output = BlenderMaterials.__createGroup(groupName, -1200, 0, 300, 0, True)
             BlenderMaterials.addInputSocket(group, 'NodeSocketColor', 'Color')
             BlenderMaterials.addInputSocket(group, 'NodeSocketVectorDirection', 'Normal')
-            nodes = group.nodes
-            links = group.links
+        else:
+            # Made by an earlier version: rebuild it in place, so the materials that already use it are updated too
+            # (its inputs and outputs are kept, so the materials keep their colours)
+            group.nodes.clear()
+            node_input = group.nodes.new('NodeGroupInput')
+            node_input.location = -1200, 0
+            node_output = group.nodes.new('NodeGroupOutput')
+            node_output.location = 300, 0
+        group["ImportLDraw fabric version"] = BlenderMaterials.__fabricVersion
+        nodes = group.nodes
+        links = group.links
 
-            principled = BlenderMaterials.__nodePrincipled(nodes, 0.0, 0.0, 0.0, roughness, 0.0, 0.0, 1.45, 0.0, 0, 0)
-            principled.inputs['Specular IOR Level'].default_value = 0.25
-            principled.inputs['Sheen Weight'].default_value = sheen
-            principled.inputs['Sheen Roughness'].default_value = sheenRoughness
-            links.new(node_input.outputs['Color'], principled.inputs['Base Color'])
-            # (the sheen comes from the fibres, so it is their colour)
-            links.new(node_input.outputs['Color'], principled.inputs['Sheen Tint'])
-            links.new(principled.outputs['BSDF'], node_output.inputs['Shader'])
+        principled = BlenderMaterials.__nodePrincipled(nodes, 0.0, 0.0, 0.0, roughness, 0.0, 0.0, 1.45, 0.0, 0, 0)
+        principled.inputs['Specular IOR Level'].default_value = 0.25
+        principled.inputs['Sheen Weight'].default_value = sheen
+        principled.inputs['Sheen Roughness'].default_value = sheenRoughness
+        links.new(node_input.outputs['Color'], principled.inputs['Base Color'])
+        # (the sheen comes from the fibres, so it is their colour)
+        links.new(node_input.outputs['Color'], principled.inputs['Sheen Tint'])
+        links.new(principled.outputs['BSDF'], node_output.inputs['Shader'])
 
-            # The part's coordinates in LDU
-            texCoord = BlenderMaterials.__nodeTexCoord(nodes, -1100, -300)
-            inLDU = BlenderMaterials.__nodeVectorMath(nodes, 'SCALE', -900, -300)
-            inLDU.inputs['Scale'].default_value = 1.0 / globalScaleFactor
-            links.new(texCoord.outputs['Object'], inLDU.inputs[0])
+        # The part's coordinates in LDU
+        texCoord = BlenderMaterials.__nodeTexCoord(nodes, -1100, -300)
+        inLDU = BlenderMaterials.__nodeVectorMath(nodes, 'SCALE', -900, -300)
+        inLDU.inputs['Scale'].default_value = 1.0 / globalScaleFactor
+        links.new(texCoord.outputs['Object'], inLDU.inputs[0])
 
-            normal = node_input.outputs['Normal']
-            x = -200
-            for pattern in (weave, fibres):
-                if pattern is None:
-                    continue
-                size, height = pattern
-                if pattern is weave:
-                    # Threads along each axis: |sin| ridges along x, y and z. On a face, the ridges along the two
-                    # axes in its plane cross to make the weave (the third is the same all over the face)
-                    toAngle = BlenderMaterials.__nodeVectorMath(nodes, 'SCALE', -700, -300)
-                    toAngle.inputs['Scale'].default_value = math.pi / size
-                    links.new(inLDU.outputs[0], toAngle.inputs[0])
-                    separate = nodes.new('ShaderNodeSeparateXYZ')
-                    separate.location = -550, -300
-                    links.new(toAngle.outputs[0], separate.inputs[0])
-                    ridges = []
-                    for axis in range(3):
-                        sine = BlenderMaterials.__nodeMath(nodes, 'SINE', -400, -200 - 150 * axis)
-                        links.new(separate.outputs[axis], sine.inputs[0])
-                        absolute = BlenderMaterials.__nodeMath(nodes, 'ABSOLUTE', -250, -200 - 150 * axis)
-                        links.new(sine.outputs[0], absolute.inputs[0])
-                        ridges.append(absolute)
-                    add1 = BlenderMaterials.__nodeMath(nodes, 'ADD', -100, -250)
-                    links.new(ridges[0].outputs[0], add1.inputs[0])
-                    links.new(ridges[1].outputs[0], add1.inputs[1])
-                    add2 = BlenderMaterials.__nodeMath(nodes, 'ADD', 0, -300)
-                    links.new(add1.outputs[0], add2.inputs[0])
-                    links.new(ridges[2].outputs[0], add2.inputs[1])
-                    heightOutput = add2.outputs[0]
-                else:
-                    noise = BlenderMaterials.__nodeNoiseTexture(nodes, 1.0 / size, 8, 0.0, -400, -700)
-                    links.new(inLDU.outputs[0], noise.inputs['Vector'])
-                    heightOutput = noise.outputs['Fac']
+        normal = node_input.outputs['Normal']
+        weaveHeight = None
+        x = -200
+        for pattern in (weave, fibres):
+            if pattern is None:
+                continue
+            size, height = pattern
+            if pattern is weave:
+                # Threads at 45 degrees to the part's axes. On a face across axis a, the threads run diagonally
+                # in the other two axes b and c, with u = b + c and v = b - c (scaled so the threads are pi apart):
+                #   threads along u:  |sin v| + 0.5 sign(sin v) sin u
+                #   threads along v:  |sin u| - 0.5 sign(sin u) sin v
+                # The |sin| is a thread's rounded profile. The second term makes each thread go over one thread
+                # and under the next, in turn (a plain weave), and the weave is the higher of the two.
+                # A bump only shows where the surface slopes towards or away from the light, so threads running
+                # towards the light hardly show; the gaps between the threads are also made darker (below),
+                # which shows both sets of threads equally whichever way the light comes from.
+                # Each axis's weave is weighted by the square of the surface normal's component along that axis
+                # (the squares add up to 1), so curved cloth blends smoothly between them.
+                # ((b + c) / sqrt(2) is the distance across the threads, so this scale makes them 'size' apart)
+                toAngle = BlenderMaterials.__nodeVectorMath(nodes, 'SCALE', -750, -300)
+                toAngle.inputs['Scale'].default_value = math.pi / (size * math.sqrt(2.0))
+                links.new(inLDU.outputs[0], toAngle.inputs[0])
+                position = nodes.new('ShaderNodeSeparateXYZ')
+                position.location = -600, -300
+                links.new(toAngle.outputs[0], position.inputs[0])
+                normalAxes = nodes.new('ShaderNodeSeparateXYZ')
+                normalAxes.location = -600, -900
+                links.new(texCoord.outputs['Normal'], normalAxes.inputs[0])
 
-                # (Distance is in the part's coordinates, so it follows the scale too)
-                bump = BlenderMaterials.__nodeBumpShader(nodes, 1.0, height * globalScaleFactor, x, -400)
-                links.new(heightOutput, bump.inputs['Height'])
-                if normal is not None:
-                    links.new(normal, bump.inputs['Normal'])
-                normal = bump.outputs['Normal']
-                x += 150
-            links.new(normal, principled.inputs['Normal'])
+                total = None
+                for a in range(3):
+                    b, c = (a + 1) % 3, (a + 2) % 3
+                    y = -200 - 220 * a
+                    sines = []
+                    for i, operation in enumerate(('ADD', 'SUBTRACT')):
+                        across = BlenderMaterials.__nodeMath(nodes, operation, -450, y - 60 * i)
+                        links.new(position.outputs[b], across.inputs[0])
+                        links.new(position.outputs[c], across.inputs[1])
+                        sine = BlenderMaterials.__nodeMath(nodes, 'SINE', -300, y - 60 * i)
+                        links.new(across.outputs[0], sine.inputs[0])
+                        sines.append(sine)
+                    threads = []
+                    for i, (profile, other, over) in enumerate(((sines[1], sines[0], 0.5), (sines[0], sines[1], -0.5))):
+                        ridge = BlenderMaterials.__nodeMath(nodes, 'ABSOLUTE', -150, y - 60 * i)
+                        links.new(profile.outputs[0], ridge.inputs[0])
+                        side = BlenderMaterials.__nodeMath(nodes, 'SIGN', -150, y - 30 - 60 * i)
+                        links.new(profile.outputs[0], side.inputs[0])
+                        overUnder = BlenderMaterials.__nodeMath(nodes, 'MULTIPLY', 0, y - 30 - 60 * i)
+                        links.new(side.outputs[0], overUnder.inputs[0])
+                        links.new(other.outputs[0], overUnder.inputs[1])
+                        thread = BlenderMaterials.__nodeMath(nodes, 'MULTIPLY_ADD', 0, y - 60 * i)
+                        links.new(overUnder.outputs[0], thread.inputs[0])
+                        thread.inputs[1].default_value = over
+                        links.new(ridge.outputs[0], thread.inputs[2])
+                        threads.append(thread)
+                    pair = BlenderMaterials.__nodeMath(nodes, 'MAXIMUM', 75, y)
+                    links.new(threads[0].outputs[0], pair.inputs[0])
+                    links.new(threads[1].outputs[0], pair.inputs[1])
+                    weight = BlenderMaterials.__nodeMath(nodes, 'MULTIPLY', 0, y - 120)
+                    links.new(normalAxes.outputs[a], weight.inputs[0])
+                    links.new(normalAxes.outputs[a], weight.inputs[1])
+                    weighted = BlenderMaterials.__nodeMath(nodes, 'MULTIPLY', 150, y)
+                    links.new(pair.outputs[0], weighted.inputs[0])
+                    links.new(weight.outputs[0], weighted.inputs[1])
+                    if total is None:
+                        total = weighted
+                    else:
+                        added = BlenderMaterials.__nodeMath(nodes, 'ADD', 300, y)
+                        links.new(total.outputs[0], added.inputs[0])
+                        links.new(weighted.outputs[0], added.inputs[1])
+                        total = added
+                heightOutput = total.outputs[0]
+                weaveHeight = heightOutput
+            else:
+                noise = BlenderMaterials.__nodeNoiseTexture(nodes, 1.0 / size, 8, 0.0, -400, -1100)
+                links.new(inLDU.outputs[0], noise.inputs['Vector'])
+                heightOutput = noise.outputs['Fac']
+
+            # (Distance is in the part's coordinates, so it follows the scale too)
+            bump = BlenderMaterials.__nodeBumpShader(nodes, 1.0, height * globalScaleFactor, 450 + x, -400)
+            links.new(heightOutput, bump.inputs['Height'])
+            if normal is not None:
+                links.new(normal, bump.inputs['Normal'])
+            normal = bump.outputs['Normal']
+            x += 150
+        links.new(normal, principled.inputs['Normal'])
+
+        if weaveHeight is not None:
+            # The gaps between the threads are a little darker (the weave's height goes from 0 between the threads
+            # to about 1.5 on top of them)
+            shade = nodes.new('ShaderNodeMapRange')
+            shade.location = 450, 300
+            links.new(weaveHeight, shade.inputs['Value'])
+            shade.inputs['From Min'].default_value = 0.0
+            shade.inputs['From Max'].default_value = 1.5
+            shade.inputs['To Min'].default_value = 1.0 - BlenderMaterials.__weaveShading
+            shade.inputs['To Max'].default_value = 1.0
+            shaded = BlenderMaterials.__nodeVectorMath(nodes, 'MULTIPLY', 600, 300)
+            links.new(node_input.outputs['Color'], shaded.inputs[0])
+            links.new(shade.outputs['Result'], shaded.inputs[1])
+            links.new(shaded.outputs[0], principled.inputs['Base Color'])
+            links.new(shaded.outputs[0], principled.inputs['Sheen Tint'])
+        principled.location = 750, 0
+        node_output.location = 1050, 0
         return group
 
     # **********************************************************************************
