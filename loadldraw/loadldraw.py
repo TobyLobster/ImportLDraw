@@ -48,6 +48,8 @@ import operator
 import zipfile
 import tempfile
 import textwrap
+import types
+import numpy
 import time
 import base64
 import binascii
@@ -206,6 +208,8 @@ class Options:
     useLogoStuds       = False          # Use the studs with the 'LEGO' logo on them
     logoStudVersion    = "4"            # Which version of the logo to use ("3" (flat), "4" (rounded) or "5" (subtle rounded))
     instanceStuds      = False          # Each stud is a new Blender object (slow)
+    stampStuds         = True           # A part with many studs makes one stud's mesh and copies it (much quicker; the same result)
+    stampStudsMinimum  = 16             # ...when it has at least this many studs
 
     # LSynth (http://www.holly-wood.it/lsynth/tutorial-en.html) is a collection of parts used to render string, hoses, cables etc
     useLSynthParts     = True           # LSynth is used to render string, hoses etc.
@@ -1890,6 +1894,15 @@ class LDrawGeometry:
         self.faceInfo = []
         self.edges = []
 
+        # Studs to add to the mesh later: each kind of stud is made into a mesh once, and copied (see stampStuds).
+        # Each is (the stud's geometry, the matrix that places it)
+        self.studs = []
+
+    def allFaceInfo(self):
+        """The information about every face, including those of the studs to add later"""
+        studGeometries = {id(studGeometry): studGeometry for studGeometry, matrix in self.studs}
+        return itertools.chain(self.faceInfo, *(studGeometry.faceInfo for studGeometry in studGeometries.values()))
+
     def parseFace(self, parameters, cull, ccw, isGrainySlopeAllowed, texmap=None):
         """Parse a face from parameters"""
 
@@ -2017,6 +2030,16 @@ class LDrawGeometry:
             # (an edge line from a logo stays unbevelled when the stud it's in is added to a part)
             newEdges.append( (fixedMatrix @ edge[0], fixedMatrix @ edge[1], allowBevelWeight and (len(edge) < 3 or edge[2])) )
         self.edges.extend(newEdges)
+
+        # Studs to add later (see stampStuds) stay that way if this step leaves them as they are (no reflection,
+        # reversed faces, double sided faces or texture). Otherwise they are added now, as they would have been.
+        if geometry.studs:
+            unchanged = cull and not invert and texmap is None and fixedMatrix == matrix and matrix.determinant() > 0.0
+            for studGeometry, studMatrix in geometry.studs:
+                if unchanged:
+                    self.studs.append((studGeometry, fixedMatrix @ studMatrix))
+                else:
+                    self.appendGeometry(studGeometry, fixedMatrix @ studMatrix, False, True, False, combinedMatrix, cull, invert, texmap)
 
 
 # **************************************************************************************
@@ -2172,7 +2195,7 @@ class LDrawNode:
         # If this is out of the ordinary, add a code that makes it a unique name to cache the mesh properly
         return "_{0}".format(index)
 
-    def getBlenderGeometry(self, realColourName, basename, parentMatrix=Math.identityMatrix, accumCull=True, accumInvert=False, texmap=None, colourMap=None):
+    def getBlenderGeometry(self, realColourName, basename, parentMatrix=Math.identityMatrix, accumCull=True, accumInvert=False, texmap=None, colourMap=None, deferStuds=False):
         """
         Returns the geometry for the Blender Object at this node.
 
@@ -2186,6 +2209,8 @@ class LDrawNode:
         coordinates. It applies to any geometry that has no texture of its own.
 
         'colourMap' has the colours defined further up ('0 !COLOUR'), as a dict code -> the name of the colour.
+
+        'deferStuds': the studs are left out, to be added later (in LDrawGeometry.studs, see stampStuds).
         """
 
         assert self.file is not None
@@ -2198,7 +2223,7 @@ class LDrawNode:
         code = LDrawNode.getBFCCode(accumCull, accumInvert, self.bfcCull, self.bfcInverted)
         textureCode = "_tx" + texmap.signature() if texmap is not None else ""
         meshName = "Mesh_{0}_{1}{2}{3}{4}".format(basename, ourColourName, code, textureCode, colourCode)
-        key = (self.filename, ourColourName, accumCull, accumInvert, self.bfcCull, self.bfcInverted, textureCode, colourCode)
+        key = (self.filename, ourColourName, accumCull, accumInvert, self.bfcCull, self.bfcInverted, textureCode, colourCode, deferStuds)
         bakedGeometry = CachedGeometry.getCached(key)
         if bakedGeometry is None:
             combinedMatrix = parentMatrix @ self.matrix
@@ -2218,11 +2243,17 @@ class LDrawNode:
                 if not child.isBlenderObjectNode():
                     childColourName = LDrawNode.resolveColour(LegoColours.mapColour(child.colourName, colourMap), ourColourName)
                     childMeshName, bg = child.getBlenderGeometry(childColourName, basename, combinedMatrix, accumCull, accumInvert,
-                                                                 colourMap=LDrawNode.childColourMap(colourMap, child))
+                                                                 colourMap=LDrawNode.childColourMap(colourMap, child),
+                                                                 deferStuds=deferStuds and not child.file.isStud)
 
                     isStud = child.file.isStud
                     isStudLogo = child.file.isStudLogo
                     childTexmap = child.texmap if child.texmap is not None else texmap
+                    if deferStuds and isStud:
+                        # The stud is added later (see stampStuds)
+                        studs = LDrawGeometry()
+                        studs.studs.append((bg, Math.identityMatrix))
+                        bg = studs
                     bakedGeometry.appendGeometry(bg, child.matrix, self.file.isStud, isStud, isStudLogo, combinedMatrix, self.bfcCull, self.bfcInverted, childTexmap)
 
             CachedGeometry.addToCache(key, bakedGeometry)
@@ -2499,6 +2530,18 @@ class LDrawFile:
             self.__usedColourCodes = codes
         return self.__usedColourCodes
 
+    def studCount(self):
+        """How many studs the file adds to its mesh (including those in its subparts and primitives)"""
+        if self.__studCount is None:
+            self.__studCount = 0        # (in case a file uses itself)
+            count = 0
+            for child in self.childNodes:
+                if child.file is None or child.isBlenderObjectNode():
+                    continue
+                count += 1 if child.file.isStud else child.file.studCount()
+            self.__studCount = count
+        return self.__studCount
+
     def isStudLogo(filename):
         """Is this file a stud logo?"""
 
@@ -2530,6 +2573,7 @@ class LDrawFile:
         self.isShortcut       = False       # A library shortcut (an assembly of parts, e.g. 3829c01)
         self.category         = None        # From '0 !CATEGORY <category>' (e.g. 'Minifig Headwear')
         self.__usedColourCodes = None
+        self.__studCount      = None
 
         isGrainySlopeAllowed = not self.isStud
 
@@ -5386,7 +5430,7 @@ def meshIsReusable(meshName, geometry):
         # A mesh loses it's materials information when it is no longer in use.
         # We must check the number of faces matches, otherwise we can't re-set the
         # materials.
-        if mesh.users == 0 and (len(mesh.polygons) != len(geometry.faces)):
+        if mesh.users == 0 and (len(mesh.polygons) != len(geometry.faces) or geometry.studs):
             #debugPrint("meshIsReusable says no users and num faces changed.")
             return False
 
@@ -5400,6 +5444,285 @@ def meshIsReusable(meshName, geometry):
                 return True
             #debugPrint("meshIsReusable found custom options - DON'T match.")
     return False
+
+# **************************************************************************************
+# Studs: on a part with many studs (e.g. a baseplate has 1,024), almost all the time goes on the studs, the same
+# work done again for every stud. Instead, each kind of stud is made into a mesh once (welded, its sharp edges
+# and bevel weights worked out), and copied into place. The result is the same, since the studs don't touch the
+# rest of the part (that is checked first, see studsCanBeStamped).
+
+globalStudPrototypes = {}
+
+def meshArrays(mesh):
+    """The mesh's geometry and attributes, as numpy arrays"""
+    result = types.SimpleNamespace()
+    count = len(mesh.vertices)
+    result.co = numpy.empty(3 * count, numpy.float32)
+    mesh.vertices.foreach_get("co", result.co)
+    result.co = result.co.reshape(count, 3).astype(numpy.float64)
+
+    result.edges = numpy.empty(2 * len(mesh.edges), numpy.int32)
+    mesh.edges.foreach_get("vertices", result.edges)
+    result.edges = result.edges.reshape(-1, 2)
+
+    result.loopVerts = numpy.empty(len(mesh.loops), numpy.int32)
+    mesh.loops.foreach_get("vertex_index", result.loopVerts)
+    result.loopEdges = numpy.empty(len(mesh.loops), numpy.int32)
+    mesh.loops.foreach_get("edge_index", result.loopEdges)
+
+    result.loopStarts = numpy.empty(len(mesh.polygons), numpy.int32)
+    mesh.polygons.foreach_get("loop_start", result.loopStarts)
+    result.materialIndices = numpy.empty(len(mesh.polygons), numpy.int32)
+    mesh.polygons.foreach_get("material_index", result.materialIndices)
+    result.materials = list(mesh.materials)
+
+    # UV maps, and other attributes (e.g. sharp edges, bevel weights)
+    result.uvs = {}
+    for uvLayer in mesh.uv_layers:
+        uvs = numpy.empty(2 * len(mesh.loops), numpy.float32)
+        uvLayer.data.foreach_get("uv", uvs)
+        result.uvs[uvLayer.name] = uvs.reshape(-1, 2)
+    result.attributes = {}
+    for attribute in mesh.attributes:
+        if attribute.name.startswith(".") or attribute.name in ("position", "material_index") or attribute.name in result.uvs:
+            continue
+        key, width, dtype = attributeLayout(attribute.data_type)
+        if key is None:
+            continue
+        values = numpy.empty(width * len(attribute.data), dtype)
+        attribute.data.foreach_get(key, values)
+        result.attributes[attribute.name] = (attribute.domain, attribute.data_type, values.reshape(len(attribute.data), width))
+    return result
+
+def attributeLayout(dataType):
+    """How to read and write an attribute of the type: (the property's name, values per element, numpy type)"""
+    return {
+        'FLOAT':        ("value",  1, numpy.float32),
+        'INT':          ("value",  1, numpy.int32),
+        'BOOLEAN':      ("value",  1, numpy.bool_),
+        'INT8':         ("value",  1, numpy.int8),
+        'FLOAT_VECTOR': ("vector", 3, numpy.float32),
+        'FLOAT2':       ("vector", 2, numpy.float32),
+        'FLOAT_COLOR':  ("color",  4, numpy.float32),
+        'BYTE_COLOR':   ("color",  4, numpy.float32),
+    }.get(dataType, (None, 0, None))
+
+def studPrototype(studGeometry, partName, recalculateNormals, removeDoubles):
+    """
+    The stud as it would be in the part's mesh, made into a mesh just as the part's mesh would be (welded, with
+    its sharp edges and bevel weights), at the origin of the part's coordinates. Returned as numpy arrays.
+    """
+    key = (id(studGeometry), recalculateNormals, removeDoubles)
+    if key in globalStudPrototypes:
+        return globalStudPrototypes[key]
+
+    geometry = LDrawGeometry()
+    geometry.appendGeometry(studGeometry, Math.identityMatrix, False, True, False, Math.identityMatrix, True, False)
+
+    mesh = bpy.data.meshes.new("ImportLDraw stud")
+    mesh.from_pydata([p.to_tuple() for p in geometry.points], [], geometry.faces)
+    mesh.validate()
+    mesh.update()
+
+    # The materials, as createMesh gives them
+    slopeAngles = slopeAnglesForPart(partName)
+    for polygon, faceInfo in zip(mesh.polygons, geometry.faceInfo):
+        isSlopeMaterial = slopeAngles is not None and isSlopeFace(slopeAngles, faceInfo.isGrainySlopeAllowed, [geometry.points[j] for j in polygon.vertices])
+        material = BlenderMaterials.getMaterial(faceInfo.faceColour, isSlopeMaterial, faceInfo.texmap)
+        if material is not None:
+            if mesh.materials.get(material.name) is None:
+                mesh.materials.append(material)
+            polygon.material_index = mesh.materials.find(material.name)
+
+    # Welded, with sharp edges and bevel weights, as in createBlenderObjectsFromNode
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    bm.faces.ensure_lookup_table()
+    bm.verts.ensure_lookup_table()
+    bm.edges.ensure_lookup_table()
+    if removeDoubles:
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=globalWeldDistance)
+    if recalculateNormals:
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    addSharpEdges(bm, types.SimpleNamespace(data=mesh), geometry, partName, joinTJunctions=removeDoubles and Options.joinTJunctions)
+    bm.free()
+
+    prototype = meshArrays(mesh)
+    prototype.radius = max((p.length for p in geometry.points), default=0.0)
+    bpy.data.meshes.remove(mesh)
+
+    globalStudPrototypes[key] = prototype
+    return prototype
+
+def studPlacements(geometry):
+    """The studs to add to the geometry, grouped by kind: a list of (the stud's geometry, [matrix, ...])"""
+    groups = {}
+    for studGeometry, matrix in geometry.studs:
+        groups.setdefault(id(studGeometry), (studGeometry, []))[1].append(matrix)
+    return list(groups.values())
+
+def studsCanBeStamped(geometry, partName, recalculateNormals, removeDoubles):
+    """
+    Whether the studs can be made by copying one stud's mesh. That gives the same result only if the studs don't
+    touch the rest of the part, or each other: if no vertex of one is near another (within the distance at which
+    vertices are welded, faces are joined, or edge lines are matched to the mesh, see addSharpEdges), and no edge
+    line of the part runs near a stud.
+    """
+    if hasattr(geometry, "studsCanBeStamped"):
+        return geometry.studsCanBeStamped
+
+    near = 1.05 * globalScaleFactor     # (addSharpEdges matches the ends of an edge line within 1 LDU)
+    alongLine = 0.15 * globalScaleFactor  # (and the mesh edges along a line within 0.1 LDU)
+
+    def pointToSegments(p, a, b):
+        """The distances from the point p to the line segments a[i] to b[i] (numpy arrays)"""
+        d = b - a
+        lengthSquared = numpy.maximum(numpy.einsum('ij,ij->i', d, d), 1e-30)
+        t = numpy.clip(numpy.einsum('ij,ij->i', p - a, d) / lengthSquared, 0.0, 1.0)
+        return numpy.linalg.norm(p - (a + t[:, None] * d), axis=1)
+
+    def pointsToSegment(points, a, b):
+        """The distances from the points to the line segment a to b"""
+        d = b - a
+        lengthSquared = max(float(d.dot(d)), 1e-30)
+        t = numpy.clip((points - a) @ d / lengthSquared, 0.0, 1.0)
+        return numpy.linalg.norm(points - (a + t[:, None] * d), axis=1)
+
+    copies = []     # (centre, radius, matrix, prototype) of every stud
+    for studGeometry, matrices in studPlacements(geometry):
+        prototype = studPrototype(studGeometry, partName, recalculateNormals, removeDoubles)
+        for matrix in matrices:
+            m = numpy.array(matrix)
+            scale = max(numpy.linalg.norm(m[:3, :3], axis=0))
+            copies.append((m[:3, 3], prototype.radius * scale, m, prototype))
+    largest = max(copy[1] for copy in copies)
+
+    def studPoints(copy):
+        centre, radius, m, prototype = copy
+        return prototype.co @ m[:3, :3].T + centre
+
+    centresKd = mathutils.kdtree.KDTree(len(copies))
+    for i, copy in enumerate(copies):
+        centresKd.insert(mathutils.Vector(copy[0]), i)
+    centresKd.balance()
+
+    def canBeStamped():
+        # A vertex of the rest of the part near a stud
+        for p in geometry.points:
+            for co, i, distance in centresKd.find_range(p, largest + near):
+                if distance > copies[i][1] + near:
+                    continue
+                points = studPoints(copies[i])
+                q = numpy.array(p)
+                if numpy.min(numpy.linalg.norm(points - q, axis=1)) < near:
+                    return False
+                ends = points[copies[i][3].edges]
+                if len(ends) and numpy.min(pointToSegments(q, ends[:, 0], ends[:, 1])) < alongLine:
+                    return False
+
+        # An edge line of the part near a stud
+        for edge in geometry.edges:
+            a, b = numpy.array(edge[0]), numpy.array(edge[1])
+            length = float(numpy.linalg.norm(b - a))
+            for co, i in verticesNearLine(centresKd, edge[0], edge[1], length, largest + near):
+                centre, radius = copies[i][0], copies[i][1]
+                if pointsToSegment(centre[None, :], a, b)[0] > radius + near:
+                    continue
+                points = studPoints(copies[i])
+                if (numpy.min(pointsToSegment(points, a, b)) < alongLine or
+                    numpy.min(numpy.linalg.norm(points - a, axis=1)) < near or
+                    numpy.min(numpy.linalg.norm(points - b, axis=1)) < near):
+                    return False
+
+        # Studs near each other
+        for i, (centre, radius, m, prototype) in enumerate(copies):
+            for co, j, distance in centresKd.find_range(mathutils.Vector(centre), radius + largest + near):
+                if j != i and distance < radius + copies[j][1] + near:
+                    return False
+        return True
+
+    result = canBeStamped()
+    geometry.studsCanBeStamped = result
+    return result
+
+def stampStuds(mesh, geometry, partName, recalculateNormals, removeDoubles):
+    """Adds the studs to the part's mesh (already welded, with sharp edges and bevel weights), copying each kind of stud"""
+    pieces = [(meshArrays(mesh), [numpy.identity(4)])]
+    for studGeometry, matrices in studPlacements(geometry):
+        pieces.append((studPrototype(studGeometry, partName, recalculateNormals, removeDoubles), [numpy.array(m) for m in matrices]))
+
+    materials = list(mesh.materials)
+    def materialIndex(material):
+        if material not in materials:
+            materials.append(material)
+        return materials.index(material)
+
+    # All the attributes, of the part and of the studs
+    attributeTypes = {}
+    uvNames = []
+    for arrays, matrices in pieces:
+        for name, (domain, dataType, values) in arrays.attributes.items():
+            attributeTypes.setdefault(name, (domain, dataType, values.shape[1], values.dtype))
+        uvNames += [name for name in arrays.uvs if name not in uvNames]
+
+    co, edges, loopVerts, loopEdges, loopStarts, materialIndices = [], [], [], [], [], []
+    attributes = {name: [] for name in attributeTypes}
+    uvs = {name: [] for name in uvNames}
+    vertexCount = edgeCount = loopCount = 0
+    for arrays, matrices in pieces:
+        copies = len(matrices)
+        m = numpy.array(matrices)
+        # (each copy's vertices, edges, loops etc. come after the last)
+        offsets = numpy.arange(copies)
+        co.append((numpy.einsum('kij,vj->kvi', m[:, :3, :3], arrays.co) + m[:, None, :3, 3]).reshape(-1, 3))
+        edges.append((arrays.edges[None, :, :] + (vertexCount + offsets * len(arrays.co))[:, None, None]).reshape(-1, 2))
+        loopVerts.append((arrays.loopVerts[None, :] + (vertexCount + offsets * len(arrays.co))[:, None]).ravel())
+        loopEdges.append((arrays.loopEdges[None, :] + (edgeCount + offsets * len(arrays.edges))[:, None]).ravel())
+        loopStarts.append((arrays.loopStarts[None, :] + (loopCount + offsets * len(arrays.loopVerts))[:, None]).ravel())
+        remap = numpy.array([materialIndex(material) for material in arrays.materials] or [0], numpy.int32)
+        materialIndices.append(numpy.tile(remap[arrays.materialIndices] if len(arrays.materialIndices) else arrays.materialIndices, copies))
+        counts = {'POINT': len(arrays.co), 'EDGE': len(arrays.edges), 'CORNER': len(arrays.loopVerts), 'FACE': len(arrays.loopStarts)}
+        for name, (domain, dataType, width, dtype) in attributeTypes.items():
+            values = arrays.attributes.get(name)
+            values = values[2] if values is not None else numpy.zeros((counts[domain], width), dtype)
+            attributes[name].append(numpy.tile(values, (copies, 1)))
+        for name in uvNames:
+            values = arrays.uvs.get(name)
+            values = values if values is not None else numpy.zeros((len(arrays.loopVerts), 2), numpy.float32)
+            uvs[name].append(numpy.tile(values, (copies, 1)))
+        vertexCount += copies * len(arrays.co)
+        edgeCount += copies * len(arrays.edges)
+        loopCount += copies * len(arrays.loopVerts)
+
+    co = numpy.concatenate(co)
+    edges = numpy.concatenate(edges)
+    loopVerts = numpy.concatenate(loopVerts)
+    loopEdges = numpy.concatenate(loopEdges)
+    loopStarts = numpy.concatenate(loopStarts)
+    materialIndices = numpy.concatenate(materialIndices)
+
+    mesh.clear_geometry()
+    mesh.vertices.add(len(co))
+    mesh.vertices.foreach_set("co", co.astype(numpy.float32).ravel())
+    mesh.edges.add(len(edges))
+    mesh.edges.foreach_set("vertices", edges.astype(numpy.int32).ravel())
+    mesh.loops.add(len(loopVerts))
+    mesh.loops.foreach_set("vertex_index", loopVerts.astype(numpy.int32))
+    mesh.loops.foreach_set("edge_index", loopEdges.astype(numpy.int32))
+    mesh.polygons.add(len(loopStarts))
+    mesh.polygons.foreach_set("loop_start", loopStarts.astype(numpy.int32))
+
+    for material in materials[len(mesh.materials):]:
+        mesh.materials.append(material)
+    mesh.polygons.foreach_set("material_index", materialIndices.astype(numpy.int32))
+    for name, (domain, dataType, width, dtype) in attributeTypes.items():
+        attribute = mesh.attributes.get(name) or mesh.attributes.new(name, dataType, domain)
+        key = attributeLayout(dataType)[0]
+        attribute.data.foreach_set(key, numpy.concatenate(attributes[name]).astype(dtype).ravel())
+    for name in uvNames:
+        uvLayer = mesh.uv_layers.get(name) or mesh.uv_layers.new(name=name)
+        uvLayer.data.foreach_set("uv", numpy.concatenate(uvs[name]).astype(numpy.float32).ravel())
+    mesh.update()
 
 # **************************************************************************************
 def createSubmodelCollection(name, parentCollection):
@@ -5913,7 +6236,15 @@ def createBlenderObjectsFromNode(node,
         # (the caller has worked out our colour: our colour code, or the colour it stands for if it is defined
         # further up, or the caller's colour for 16)
         ourColourName = realColourName
-        meshName, geometry = node.getBlenderGeometry(ourColourName, name, texmap=texmap, colourMap=colourMap)
+        # (a part with many studs makes one stud and copies it, see stampStuds)
+        recalculateNormals = node.file.isDoubleSided and (Options.resolveAmbiguousNormals == "guess")
+        keepDoubleSided    = node.file.isDoubleSided and (Options.resolveAmbiguousNormals == "double")
+        removeDoubles      = Options.removeDoubles and not keepDoubleSided
+        deferStuds = (Options.stampStuds and not Options.instanceStuds and node.file.isPart and
+                      node.file.studCount() >= Options.stampStudsMinimum)
+        meshName, geometry = node.getBlenderGeometry(ourColourName, name, texmap=texmap, colourMap=colourMap, deferStuds=deferStuds)
+        if geometry.studs and not (geometry.points and studsCanBeStamped(geometry, name, recalculateNormals, removeDoubles)):
+            meshName, geometry = node.getBlenderGeometry(ourColourName, name, texmap=texmap, colourMap=colourMap)
         mesh, newMeshCreated = createMesh(name, meshName, geometry)
 
         # Format a name for the Blender Object
@@ -5933,7 +6264,7 @@ def createBlenderObjectsFromNode(node,
         # Mark object as transparent if any polygon is transparent
         ob["Lego.isTransparent"] = False
         if mesh is not None:
-            for faceInfo in geometry.faceInfo:
+            for faceInfo in geometry.allFaceInfo():
                 material = BlenderMaterials.getMaterial(faceInfo.faceColour, False)
                 if material is not None:
                     if "Lego.isTransparent" in material:
@@ -5981,11 +6312,6 @@ def createBlenderObjectsFromNode(node,
             addNodeToParentWithGroups(blenderNodeParent, [], lamp_object)
 
         if newMeshCreated:
-            # Calculate what we need to do next
-            recalculateNormals = node.file.isDoubleSided and (Options.resolveAmbiguousNormals == "guess")
-            keepDoubleSided    = node.file.isDoubleSided and (Options.resolveAmbiguousNormals == "double")
-            removeDoubles      = Options.removeDoubles and not keepDoubleSided
-
             bm = bmesh.new()
             bm.from_mesh(ob.data)
             bm.faces.ensure_lookup_table()
@@ -6005,6 +6331,10 @@ def createBlenderObjectsFromNode(node,
 
             bm.clear()
             bm.free()
+
+            # Add the studs, copying each kind of stud
+            if geometry.studs:
+                stampStuds(mesh, geometry, name, recalculateNormals, removeDoubles)
 
             # Scale for Gaps
             if Options.gaps and node.file.isPart:
@@ -6864,6 +7194,7 @@ def loadFromFileWithoutProgress(context, filename, isFullFilepath=True):
     CachedDirectoryFilenames.clearCache()
     CachedFiles.clearCache()
     CachedGeometry.clearCache()
+    globalStudPrototypes.clear()
     EmbeddedImages.clearCache()
     BlenderMaterials.clearCache()
     Configure.warningSuppression = {}
