@@ -434,7 +434,11 @@ class Progress:
     building      = 0.95    # How much of the indicator the building takes (the rest is setting up the scene)
     printInterval = 5.0     # Seconds between lines in the console
 
+    useCursor     = True    # Show the progress in place of the mouse cursor (not when importing a step at a time,
+                            # see ImportTask, which shows it in the status bar instead)
     windowManager = None
+    phase         = ""      # What the import is doing: 'reading', 'making' or 'finishing'
+    percent       = 0
     total         = 1.0
     done          = 0.0
     parts         = 0
@@ -453,11 +457,13 @@ class Progress:
         Progress.seen      = set()
         Progress.started   = Progress.lastPrint = time.time()
         Progress.lastShown = -1
+        Progress.phase     = "reading"
+        Progress.percent   = 0
 
         # (there is no indicator without a window, e.g. when Blender runs in the background)
         Progress.windowManager = None
         windowManager = getattr(bpy.context, "window_manager", None)
-        if windowManager is not None and windowManager.windows:
+        if Progress.useCursor and windowManager is not None and windowManager.windows:
             Progress.windowManager = windowManager
             windowManager.progress_begin(0, 100)
             windowManager.progress_update(0)
@@ -499,6 +505,23 @@ class Progress:
         Progress.parts = len(Progress.seen)
         Progress.seen = set()
         Progress.total = max(Progress.parts + Progress.perObject * objects, 1.0)
+        Progress.phase = "making"
+
+    def finishing():
+        """Once the objects are made: setting up the scene"""
+        Progress.phase = "finishing"
+
+    def canCancel():
+        """Whether the import can still be cancelled (until it starts adding to the scene)"""
+        return Progress.phase in ("reading", "making")
+
+    def statusText():
+        """How the import is getting on, for the status bar"""
+        if Progress.phase in ("", "reading"):
+            return "Reading files"
+        if Progress.phase == "making":
+            return "{0}%  ({1} of {2} different parts made)".format(Progress.percent, Progress.partsDone, Progress.parts)
+        return "{0}%  (setting up the scene)".format(max(Progress.percent, int(100 * Progress.building)))
 
     def objectMade(name, colourName):
         """After making an object (and the part's mesh, the first time the part is used)"""
@@ -513,6 +536,7 @@ class Progress:
 
     def __show(fraction):
         percent = int(100 * fraction)
+        Progress.percent = percent
         if Progress.windowManager is not None and percent != Progress.lastShown:
             Progress.lastShown = percent
             Progress.windowManager.progress_update(percent)
@@ -531,6 +555,7 @@ class Progress:
         if Progress.started and seconds >= Progress.printInterval:
             progressPrint("Finished in {0:.1f} seconds".format(seconds))
         Progress.started = 0.0
+        Progress.phase = ""
 
 # **************************************************************************************
 def progressPrint(message):
@@ -2137,6 +2162,12 @@ class LDrawNode:
         return isBON
 
     def load(self):
+        """Reads the file and the files it uses"""
+        for step in self.loadSteps():
+            pass
+
+    def loadSteps(self):
+        """Reads the file and the files it uses, pausing (yield) after each file read (see ImportTask)"""
         # Is this file in the cache?
         self.file = CachedFiles.getCached(self.filename)
         if self.file is None:
@@ -2146,10 +2177,11 @@ class LDrawNode:
 
             # Add the new file to the cache
             CachedFiles.addToCache(self.filename, self.file)
+            yield
 
         # Load any children
         for child in self.file.childNodes:
-            child.load()
+            yield from child.loadSteps()
 
     def resolveColour(colourName, realColourName):
         if colourName == "16":
@@ -6219,6 +6251,8 @@ def createBlenderObjectsFromNode(node,
     'colourMap' has the colours defined further up ('0 !COLOUR') that apply inside the node: code -> colour name.
     Creates and optimises the mesh for each object too.
     'texmap' is a texture from further up the hierarchy that applies to this node, in the node's coordinates.
+
+    It pauses (yield) after making each object (see ImportTask), and returns the node's object (use 'yield from').
     """
 
     global globalBrickCount
@@ -6331,10 +6365,12 @@ def createBlenderObjectsFromNode(node,
 
             bm.clear()
             bm.free()
+            yield
 
             # Add the studs, copying each kind of stud
             if geometry.studs:
                 stampStuds(mesh, geometry, name, recalculateNormals, removeDoubles)
+                yield
 
             # Scale for Gaps
             if Options.gaps and node.file.isPart:
@@ -6381,6 +6417,7 @@ def createBlenderObjectsFromNode(node,
             addPrintNormals(mesh)
 
             smoothShadingAndFreestyleEdges(ob)
+            yield
 
         # Keep track of all vertices in global space, for positioning the camera and/or root object at the end
         # Notice that we do this after scaling for Options.gaps
@@ -6408,9 +6445,11 @@ def createBlenderObjectsFromNode(node,
             if not bakingModifiers():
                 addModifiers(ob)
             elif newMeshCreated:
+                yield
                 bakeModifiers(mesh)
 
         Progress.objectMade(name, ourColourName)
+        yield
 
     else:
         blenderParentTransform = blenderParentTransform @ localMatrix
@@ -6425,8 +6464,8 @@ def createBlenderObjectsFromNode(node,
         if childTexmap is not None:
             childTexmap = childTexmap.transformed(childNode.matrix)
 
-        createBlenderObjectsFromNode(childNode, childNode.matrix, childNode.filename, childColourName, blenderParentTransform, localToWorldSpaceMatrix @ localMatrix, blenderNodeParent, childTexmap, hidden,
-                                     LDrawNode.childColourMap(colourMap, childNode))
+        yield from createBlenderObjectsFromNode(childNode, childNode.matrix, childNode.filename, childColourName, blenderParentTransform, localToWorldSpaceMatrix @ localMatrix, blenderNodeParent, childTexmap, hidden,
+                                                LDrawNode.childColourMap(colourMap, childNode))
 
     globalCurrentCollection = previousCollection
     return ob
@@ -7092,16 +7131,18 @@ def meshHullPoints(mesh):
     """
     flat = mesh.get("ldrawHullPoints")
     if flat is None:
-        coords = [v.co.copy() for v in mesh.vertices]
-        if len(coords) > 4:
+        coords = None
+        if len(mesh.vertices) > 4:
+            # (from the mesh, which is much quicker than adding the vertices one by one)
             bm = bmesh.new()
-            for co in coords:
-                bm.verts.new(co)
+            bm.from_mesh(mesh)
             result = bmesh.ops.convex_hull(bm, input=bm.verts, use_existing_faces=False)
             hull = [vert.co.copy() for vert in result["geom"] if isinstance(vert, bmesh.types.BMVert)]
             bm.free()
             if hull:
                 coords = hull
+        if coords is None:
+            coords = [v.co.copy() for v in mesh.vertices]
         flat = [c for co in coords for c in co]
         mesh["ldrawHullPoints"] = flat
     return [mathutils.Vector(flat[i:i + 3]) for i in range(0, len(flat), 3)]
@@ -7122,14 +7163,72 @@ def getConvexHull(minPoints = 3):
         bm.free()
 
 # **************************************************************************************
-def loadFromFile(context, filename, isFullFilepath=True):
-    """Imports the file. Shows the progress while it runs (see Progress)."""
-    try:
-        return loadFromFileWithoutProgress(context, filename, isFullFilepath)
-    finally:
+class ImportTask:
+    """
+    An import done a step at a time: a file read, an object made, or a stage of setting up the scene. Between steps
+    Blender can carry on (see ImportLDrawSteps in importldraw.py), so it stays responsive (on macOS it would otherwise
+    show the spinning cursor), it can show how far the import has got, and Esc can cancel it.
+    """
+
+    def __init__(self, context, filename, isFullFilepath=True):
+        self.steps  = importSteps(context, filename, isFullFilepath)
+        self.done   = False
+        self.result = None      # The root object, once finished (None if nothing was imported)
+
+    def step(self, seconds=None):
+        """Carries on with the import for about the given time (or until it's finished). Returns True when finished."""
+        if self.done:
+            return True
+        stopTime = None if seconds is None else time.time() + seconds
+        try:
+            while True:
+                next(self.steps)
+                if stopTime is not None and time.time() >= stopTime:
+                    return False
+        except StopIteration as stop:
+            self.result = stop.value
+            self.__finish()
+            return True
+        except BaseException:
+            self.__finish()
+            raise
+
+    def cancel(self):
+        """Stops the import, removing what it has made so far"""
+        if not self.done:
+            self.steps.close()
+            self.__finish()
+
+    def __finish(self):
+        self.done = True
         Progress.end()
 
-def loadFromFileWithoutProgress(context, filename, isFullFilepath=True):
+def loadFromFile(context, filename, isFullFilepath=True):
+    """Imports the file (all at once). Shows the progress while it runs (see Progress)."""
+    task = ImportTask(context, filename, isFullFilepath)
+    task.step()
+    return task.result
+
+def cancelImport(existingMeshes):
+    """Removes what a cancelled import has made: the objects (not in the scene yet), and new meshes nothing uses"""
+    global globalObjectsToAdd
+    for ob in globalObjectsToAdd:
+        if ob.name in bpy.data.objects:
+            bpy.data.objects.remove(ob, do_unlink=True)
+    globalObjectsToAdd = []
+    for mesh in [mesh for mesh in bpy.data.meshes if mesh.users == 0 and mesh.name not in existingMeshes]:
+        bpy.data.meshes.remove(mesh)
+    removeBakeScene()
+    if Configure.tempDir:
+        Configure.tempDir.cleanup()
+        Configure.tempDir = None
+    progressPrint("Import cancelled")
+
+def importSteps(context, filename, isFullFilepath=True):
+    """
+    Imports the file, a step at a time: it pauses (yield) after each step, see ImportTask. Returns the root object
+    (None if nothing was imported).
+    """
     global globalCamerasToAdd
     global globalContext
     global globalScaleFactor
@@ -7220,9 +7319,16 @@ def loadFromFileWithoutProgress(context, filename, isFullFilepath=True):
     global globalImportFilepath
     globalImportFilepath = os.path.abspath(filename) if isFullFilepath else ""
 
+    # (if the import is cancelled, see cancelImport)
+    existingMeshes = {mesh.name for mesh in bpy.data.meshes}
+
     debugPrint("Loading files")
     node = LDrawNode(filename, isFullFilepath, os.path.dirname(filename))
-    node.load()
+    try:
+        yield from node.loadSteps()
+    except GeneratorExit:
+        cancelImport(existingMeshes)
+        raise
     # node.printBFC()
 
     if node.file.isModel:
@@ -7269,7 +7375,13 @@ def loadFromFileWithoutProgress(context, filename, isFullFilepath=True):
 
     # Create Blender objects from the loaded file
     debugPrint("Creating Blender objects")
-    rootOb = createBlenderObjectsFromNode(node, node.matrix, name)
+    try:
+        rootOb = yield from createBlenderObjectsFromNode(node, node.matrix, name)
+    except GeneratorExit:
+        cancelImport(existingMeshes)
+        raise
+    Progress.finishing()
+    yield
 
     # Say clearly if files were missing, since the result can be incomplete or even empty
     # (e.g. a part that needs subparts newer than the LDraw library in use)
@@ -7413,6 +7525,8 @@ def loadFromFileWithoutProgress(context, filename, isFullFilepath=True):
             if (lampVector.length < 0.001):
                 unlinkFromScene(light)
 
+    yield
+
     # All the parts are made, so the scene used for baking is no longer needed
     removeBakeScene()
 
@@ -7441,7 +7555,9 @@ def loadFromFileWithoutProgress(context, filename, isFullFilepath=True):
 
     # Parent only once everything has been added to the scene, otherwise the matrix_world's are
     # sometimes not updated properly - some are erroneously still the identity matrix.
+    yield
     setupImplicitParents()
+    yield
 
     # Add cameras to the scene
     for ob in globalCamerasToAdd:
@@ -7496,6 +7612,8 @@ def loadFromFileWithoutProgress(context, filename, isFullFilepath=True):
     # Set to render at full resolution
     if Options.setRenderSettings:
         scene.render.resolution_percentage = 100
+
+    yield
 
     # Setup scene as appropriate
     if Options.instructionsLook:

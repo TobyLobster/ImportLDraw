@@ -28,6 +28,7 @@ The python module loadldraw does the actual work.
 
 import configparser
 import os
+import traceback
 import bpy
 from bpy.props import (StringProperty,
                        FloatProperty,
@@ -442,6 +443,89 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.Options.positionCamera             = self.positionCamera
         loadldraw.Options.cameraBorderPercent        = self.cameraBorderPercentage / 100.0
 
+        # From the File menu, the import goes a step at a time (see ImportLDrawSteps), so Blender stays responsive,
+        # shows how far the import has got, and Esc cancels it. From a script, or when the import is redone with
+        # different settings ('Adjust Last Operation'), it is done all at once.
+        if (self.options.is_invoke and not (self.options.is_repeat or self.options.is_repeat_last) and
+                context.window is not None and not bpy.app.background):
+            try:
+                result = bpy.ops.import_scene.importldraw_steps('INVOKE_DEFAULT', filepath=self.filepath)
+            except RuntimeError:
+                result = None
+            if result is not None and 'RUNNING_MODAL' in result:
+                return {'FINISHED'}
+
         if loadldraw.loadFromFile(self, self.filepath) is None:
             return {'CANCELLED'}
         return {'FINISHED'}
+
+
+class ImportLDrawSteps(bpy.types.Operator):
+    """
+    Imports an LDraw file a step at a time (see loadldraw.ImportTask): Blender carries on between steps, so it stays
+    responsive (on macOS it would otherwise show the spinning cursor). The status bar shows how far the import has
+    got, and Esc cancels it. Started by ImportLDrawOps, once the import options are set.
+    """
+
+    bl_idname       = "import_scene.importldraw_steps"
+    bl_label        = "Import LDraw"
+    bl_options      = {'UNDO', 'INTERNAL'}
+
+    filepath: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    # How long each step runs before Blender carries on (handling input, redrawing) for a moment
+    stepSeconds = 0.1
+
+    # Events let through to Blender while importing (all other input is ignored, so nothing changes the scene
+    # halfway through)
+    passThrough = {'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE', 'TIMER_REPORT', 'TIMERREGION', 'TIMER_JOBS',
+                   'TIMER_AUTOSAVE', 'WINDOW_DEACTIVATE', 'NONE'}
+
+    def invoke(self, context, event):
+        loadldraw.Progress.useCursor = False
+        self.task = loadldraw.ImportTask(self, self.filepath)
+        self.timer = context.window_manager.event_timer_add(0.02, window=context.window)
+        context.window_manager.modal_handler_add(self)
+        self.showStatus(context)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if event.type == 'ESC' and event.value == 'PRESS' and loadldraw.Progress.canCancel():
+            self.task.cancel()
+            self.report({'WARNING'}, "Import cancelled")
+            return self.stop(context, {'CANCELLED'})
+
+        if event.type == 'TIMER':
+            try:
+                finished = self.task.step(self.stepSeconds)
+            except Exception as error:
+                traceback.print_exc()
+                self.report({'ERROR'}, "The import failed: {0}".format(error))
+                return self.stop(context, {'CANCELLED'})
+            if finished:
+                return self.stop(context, {'FINISHED'} if self.task.result is not None else {'CANCELLED'})
+            self.showStatus(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type in self.passThrough:
+            return {'PASS_THROUGH'}
+        return {'RUNNING_MODAL'}
+
+    def cancel(self, context):
+        """Blender stops the import (e.g. when a file is opened, or Blender quits)"""
+        self.task.cancel()
+        self.stop(context, None)
+
+    def stop(self, context, result):
+        context.window_manager.event_timer_remove(self.timer)
+        if context.workspace is not None:
+            context.workspace.status_text_set(None)
+        loadldraw.Progress.useCursor = True
+        return result
+
+    def showStatus(self, context):
+        text = "Importing LDraw: " + loadldraw.Progress.statusText()
+        if loadldraw.Progress.canCancel():
+            text += "        Esc to cancel"
+        if context.workspace is not None:
+            context.workspace.status_text_set(text)
