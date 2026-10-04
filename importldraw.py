@@ -106,6 +106,14 @@ class Preferences():
             return False
 
 
+def indentedRow(layout, enabled=True):
+    """A slightly indented row in the import options, for a setting that goes with the one above it"""
+    row = layout.row()
+    row.separator()
+    row.enabled = enabled
+    return row
+
+
 class ImportLDrawOps(bpy.types.Operator, ImportHelper):
     """Import LDraw - Import Operator."""
 
@@ -143,9 +151,9 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         description="Resolution of part primitives, ie. how much geometry they have",
         default=prefs.get("resolution", "Standard"),
         items=(
-            ("Standard", "Standard primitives",        "Import using standard resolution primitives."),
-            ("High",     "High resolution primitives", "Import using high resolution primitives."),
-            ("Low",      "Low resolution primitives",  "Import using low resolution primitives.")
+            ("Standard", "Standard",                   "Import using standard resolution primitives."),
+            ("High",     "High resolution",            "Import using high resolution primitives."),
+            ("Low",      "Low resolution",             "Import using low resolution primitives.")
         )
     )
 
@@ -160,8 +168,8 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         description="Realism or Schematic look",
         default=prefs.get("useLook", "normal"),
         items=(
-            ("normal", "Realistic Look", "Render to look realistic."),
-            ("instructions", "Lego Instructions Look", "Render to look like the instruction book pictures."),
+            ("normal", "Realistic look", "Render to look realistic."),
+            ("instructions", "Instructions look", "Render to look like the instruction book pictures."),
         )
     )
 
@@ -318,55 +326,73 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         default=prefs.get("cameraBorderPercentage", 5.0)
     )
 
+    def invoke(self, context, event):
+        # A file dropped on the 3D Viewport or the Outliner (see ImportLDrawFileHandler): the file is already chosen,
+        # so the import options are shown in a pop-up instead of the file browser
+        if self.properties.is_property_set("filepath"):
+            title = os.path.basename(self.filepath)
+            try:
+                return context.window_manager.invoke_props_dialog(self, width=400, title=title, confirm_text="Import")
+            except TypeError:
+                # (Blender 4.1 has no title or confirm_text)
+                return context.window_manager.invoke_props_dialog(self, width=400)
+        return ImportHelper.invoke(self, context, event)
+
     def draw(self, context):
         """Display import options."""
 
+        # The file browser's side panel is narrow, and an add-on can't make it wider. So the settings are in
+        # sections with headings, and each takes the full width (no column of labels beside them).
         layout = self.layout
-        layout.use_property_split = True # Active single-column layout
+        layout.use_property_split = False
 
         box = layout.box()
-        box.label(text="Import Options", icon='PREFERENCES')
-        box.label(text="LDraw filepath:", icon='FILEBROWSER')
-        box.prop(self, "ldrawPath")
-        box.prop(self, "realScale")
-        box.prop(self, "look", expand=True)
-        box.prop(self, "addEnvironment")
-        box.prop(self, "positionCamera")
-        box.prop(self, "cameraBorderPercentage")
-
-        box.prop(self, "colourScheme", expand=True)
-        box.prop(self, "defaultColour")
-        box.prop(self, "resPrims", expand=True)
-        box.prop(self, "smoothParts")
-        box.prop(self, "bevelEdges")
-        box.prop(self, "bevelWidth")
-        row = box.row()
-        row.enabled = self.bevelEdges and self.look != "instructions"
-        row.prop(self, "bakeBevels")
-        box.prop(self, "addGaps")
-        box.prop(self, "gapWidthMM")
-        box.prop(self, "curvedWalls")
-        box.prop(self, "importCameras")
-        box.prop(self, "linkParts")
+        box.label(text="LDraw parts library", icon='FILEBROWSER')
+        box.prop(self, "ldrawPath", text="")
         box.prop(self, "useUnofficialParts")
 
-        box.prop(self, "useTextures")
+        box = layout.box()
+        box.label(text="Look", icon='SHADING_RENDERED')
+        box.column(align=True).prop(self, "look", expand=True)
+        box.label(text="Colours:")
+        box.column(align=True).prop(self, "colourScheme", expand=True)
         row = box.row()
-        row.enabled = self.useTextures
-        row.prop(self, "packEmbeddedImages")
-        box.prop(self, "useLogoStuds")
-        box.prop(self, "instanceStuds")
+        row.label(text="Default colour")
+        row.prop(self, "defaultColour", text="")
+        box.prop(self, "addEnvironment")
+        box.prop(self, "positionCamera")
+        indentedRow(box, self.positionCamera).prop(self, "cameraBorderPercentage", text="Camera border %")
 
-        box.prop(self, "positionOnGround")
+        box = layout.box()
+        box.label(text="Parts", icon='MESH_CUBE')
+        box.prop(self, "realScale", text="Scale")
+        box.label(text="Primitives:")
+        box.column(align=True).prop(self, "resPrims", expand=True)
+        box.prop(self, "smoothParts", text="Smooth faces")
+        box.prop(self, "bevelEdges")
+        indentedRow(box, self.bevelEdges).prop(self, "bevelWidth", text="Bevel width")
+        indentedRow(box, self.bevelEdges and self.look != "instructions").prop(self, "bakeBevels")
+        box.prop(self, "addGaps", text="Gaps between parts")
+        indentedRow(box, self.addGaps).prop(self, "gapWidthMM", text="Gap width (mm)")
+        box.prop(self, "curvedWalls", text="Curved walls")
+        box.prop(self, "useLogoStuds", text="LEGO logo on studs")
+        box.prop(self, "instanceStuds")
+        box.prop(self, "useTextures")
+        indentedRow(box, self.useTextures).prop(self, "packEmbeddedImages")
+        box.prop(self, "linkParts")
+
+        box = layout.box()
+        box.label(text="Objects", icon='OUTLINER')
+        box.prop(self, "positionOnGround", text="Place on ground at origin")
         box.prop(self, "numberNodes")
         box.prop(self, "flatten")
-        row = box.row()
-        row.enabled = not self.flatten
-        row.prop(self, "submodelCollections")
-        box.prop(self, "minifigHierarchy")
+        indentedRow(box, not self.flatten).prop(self, "submodelCollections")
+        box.prop(self, "minifigHierarchy", text="Parent minifigs")
+        box.prop(self, "importCameras")
 
-        box.label(text="Resolve Ambiguous Normals:", icon='ORIENTATION_NORMAL')
-        box.prop(self, "resolveNormals", expand=True)
+        box = layout.box()
+        box.label(text="Ambiguous normals", icon='ORIENTATION_NORMAL')
+        box.column(align=True).prop(self, "resolveNormals", expand=True)
 
     def execute(self, context):
         """Start the import process."""
@@ -458,6 +484,21 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         if loadldraw.loadFromFile(self, self.filepath) is None:
             return {'CANCELLED'}
         return {'FINISHED'}
+
+
+# Drag and drop: LDraw files dropped on the 3D Viewport or the Outliner are imported (Blender 4.1 and above)
+if hasattr(bpy.types, "FileHandler"):
+    class ImportLDrawFileHandler(bpy.types.FileHandler):
+        bl_idname          = "IO_FH_importldraw"
+        bl_label           = "LDraw"
+        bl_import_operator = "import_scene.importldraw"
+        bl_file_extensions = ".ldr;.mpd;.dat;.l3b;.io"
+
+        @classmethod
+        def poll_drop(cls, context):
+            return context.area is not None and context.area.type in ('VIEW_3D', 'OUTLINER')
+else:
+    ImportLDrawFileHandler = None
 
 
 class ImportLDrawSteps(bpy.types.Operator):

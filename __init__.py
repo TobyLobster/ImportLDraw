@@ -53,11 +53,15 @@ def register():
     """Register Menu Listing."""
     bpy.utils.register_class(importldraw.ImportLDrawOps)
     bpy.utils.register_class(importldraw.ImportLDrawSteps)
+    if importldraw.ImportLDrawFileHandler is not None:
+        bpy.utils.register_class(importldraw.ImportLDrawFileHandler)
     bpy.types.TOPBAR_MT_file_import.append(menuImport)
 
 
 def unregister():
     """Unregister Menu Listing."""
+    if importldraw.ImportLDrawFileHandler is not None:
+        bpy.utils.unregister_class(importldraw.ImportLDrawFileHandler)
     bpy.utils.unregister_class(importldraw.ImportLDrawSteps)
     bpy.utils.unregister_class(importldraw.ImportLDrawOps)
     bpy.types.TOPBAR_MT_file_import.remove(menuImport)
