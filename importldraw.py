@@ -254,9 +254,15 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
     framesPerStep: IntProperty(
         name="Frames per step",
         description="How many frames each building step takes in the animation",
-        default=prefs.get("framesPerStep", 12),
+        default=prefs.get("framesPerStep", 1),
         min=1,
         max=10000
+    )
+
+    expandSubmodels: BoolProperty(
+        name="Build submodels step by step",
+        description="In the animation, build each submodel step by step too (where it goes in the model), before the step that uses it. Otherwise a submodel appears all at once",
+        default=prefs.get("expandSubmodels", True)
     )
 
     minifigHierarchy: BoolProperty(
@@ -409,6 +415,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         box.label(text="Building steps", icon='TIME')
         box.prop(self, "animateSteps")
         indentedRow(box, self.animateSteps).prop(self, "framesPerStep")
+        indentedRow(box, self.animateSteps).prop(self, "expandSubmodels")
 
         box = layout.box()
         box.label(text="Ambiguous normals", icon='ORIENTATION_NORMAL')
@@ -440,6 +447,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("minifigHierarchy",      self.minifigHierarchy)
         ImportLDrawOps.prefs.set("animateSteps",          self.animateSteps)
         ImportLDrawOps.prefs.set("framesPerStep",         self.framesPerStep)
+        ImportLDrawOps.prefs.set("expandSubmodels",       self.expandSubmodels)
         ImportLDrawOps.prefs.set("useUnofficialParts",    self.useUnofficialParts)
         ImportLDrawOps.prefs.set("useTextures",           self.useTextures)
         ImportLDrawOps.prefs.set("packEmbeddedImages",    self.packEmbeddedImages)
@@ -474,6 +482,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.Options.minifigHierarchy           = self.minifigHierarchy
         loadldraw.Options.animateSteps               = self.animateSteps
         loadldraw.Options.framesPerStep              = self.framesPerStep
+        loadldraw.Options.expandSubmodels            = self.expandSubmodels
         loadldraw.Options.useTextures                = self.useTextures
         loadldraw.Options.packEmbeddedImages         = self.packEmbeddedImages
         loadldraw.Options.useLogoStuds               = self.useLogoStuds

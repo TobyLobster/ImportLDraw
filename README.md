@@ -37,7 +37,7 @@ It's intended to be accurate, compatible, and fast (in that order of priority).
 + **Light bricks** - Bricks that emit light are supported.
 + **Studio lighting** - The realistic look is lit by an HDR image of a studio (*background.exr*). If the image is missing, a similar built-in studio light is used instead.
 + **Parenting Minifigs** - Optionally make the parts of a minifig parented to each other, so e.g. rotating an arm also moves the hand with it.
-+ **Building steps** - Each part records the building step it is added in (*0 STEP* and *0 ROTSTEP* lines). Optionally the import animates building the model: each step's parts appear in turn (a submodel appears all at once, in the step that uses it), with a timeline marker for each step. Pieces LeoCAD hides from a later step disappear then.
++ **Building steps** - Each part records the building step it is added in (*0 STEP* and *0 ROTSTEP* lines). Optionally the import animates building the model: each step's parts appear in turn, with a timeline marker for each step. Each submodel is built step by step too, in place, before the step that uses it (or it can appear all at once). Pieces LeoCAD hides from a later step disappear then.
 + **Submodels as collections** - Optionally give each submodel its own collection, nested like the submodels, so whole submodels can be shown or hidden, or used with geometry nodes.
 + **Fast** - even large models can be imported in seconds.
 

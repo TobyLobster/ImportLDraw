@@ -45,6 +45,7 @@ import copy
 import platform
 import itertools
 import operator
+import bisect
 import zipfile
 import tempfile
 import textwrap
@@ -201,7 +202,9 @@ class Options:
     submodelCollections = False         # Each submodel (and the model itself) also gets its own collection, nested like the submodels
     minifigHierarchy   = True           # Parts of minifigs are automatically parented to each other in a hierarchy
     animateSteps       = False          # Animate building the model step by step (from '0 STEP' lines): each step's parts appear in turn
-    framesPerStep      = 12             # With animateSteps: the frames each step takes in the animation
+    framesPerStep      = 1              # With animateSteps: the frames each step takes in the animation
+    expandSubmodels    = True           # With animateSteps: each submodel is built step by step too (before the step that uses it),
+                                        # rather than appearing all at once
     flattenGroups      = False          # All LEOCad groups are ignored - no groups
     usePrincipledShaderWhenAvailable = True  # Use the new principled shader
     scriptDirectory    = os.path.dirname( os.path.realpath(__file__) )
@@ -288,7 +291,8 @@ globalGroupObjects = {}         # LeoCAD group empties created this import, keye
 globalCurrentCollection = None  # With Options.submodelCollections: the collection for objects being created now
 globalHiddenObjects = []        # Objects of pieces LeoCAD marked as hidden (hidden once they are in the scene)
 globalModelSteps = []           # The building steps of the model imported (its step numbers that have pieces in them)
-globalObjectSteps = []          # (object, step, step it is hidden from or None) for the objects made this import
+globalObjectSteps = []          # (object, step key, step key it is hidden from or None) for the objects made this import (see animateBuildSteps)
+globalStepNames = {}            # Building steps with expandSubmodels: the step key of the start of each submodel used -> its filename
 globalObjectParts = {}          # Object pointer -> (bare part number, category) of the objects created this import (for minifig rigging)
 globalObjectCollections = {}    # With Options.submodelCollections: object pointer -> the collection it belongs in
 globalImportFilepath = ""       # The file being imported (embedded images may be written next to it)
@@ -6276,12 +6280,16 @@ def createBlenderObjectsFromNode(node,
                                  hidden=False,
                                  colourMap=None,
                                  buildStep=None,
-                                 stepHide=None):
+                                 stepHide=None,
+                                 buildKey=None,
+                                 hideKey=None):
     """
     Creates a Blender Object for the node given and (recursively) for all it's children as required.
     'hidden' is True inside a piece (e.g. a submodel) that LeoCAD marked as hidden.
     'buildStep' is the building step of the piece of the model that this node is in (a submodel appears all at once,
     in the step that uses it), and 'stepHide' the step it is hidden from (or None).
+    'buildKey' and 'hideKey' are the same for building submodels step by step (Options.expandSubmodels, see
+    animateBuildSteps). Inside a model or submodel 'buildKey' is the key of where it starts (empty for the root).
     'colourMap' has the colours defined further up ('0 !COLOUR') that apply inside the node: code -> colour name.
     Creates and optimises the mesh for each object too.
     'texmap' is a texture from further up the hierarchy that applies to this node, in the node's coordinates.
@@ -6347,7 +6355,8 @@ def createBlenderObjectsFromNode(node,
         # The building step it appears in (see animateBuildSteps)
         if len(globalModelSteps) > 1:
             ob["LDraw step"] = buildStep or 1
-        globalObjectSteps.append((ob, buildStep or 1, stepHide))
+        objectKeys = objectStepKeys(node, buildStep, stepHide, buildKey, hideKey)
+        globalObjectSteps.append((ob,) + objectKeys)
 
         # Remember which part this is, for rigging minifigs (see setupImplicitParents)
         if Options.minifigHierarchy and not node.file.isModel:
@@ -6383,7 +6392,7 @@ def createBlenderObjectsFromNode(node,
             lamp_object.location = (-27.0 * globalScaleFactor, 0.0, -18.0 * globalScaleFactor)
 
             addNodeToParentWithGroups(blenderNodeParent, [], lamp_object)
-            globalObjectSteps.append((lamp_object, buildStep or 1, stepHide))
+            globalObjectSteps.append((lamp_object,) + objectKeys)
 
         if newMeshCreated:
             bm = bmesh.new()
@@ -6494,6 +6503,15 @@ def createBlenderObjectsFromNode(node,
     else:
         blenderParentTransform = blenderParentTransform @ localMatrix
 
+    # Building submodels step by step: each submodel used in a step is built in turn (several copies of the same
+    # submodel in one step are built together)
+    expanding = Options.animateSteps and Options.expandSubmodels and node.file.isModel
+    submodelIndex = {}
+    if expanding:
+        for childNode in node.file.childNodes:
+            if childNode.file is not None and childNode.file.isModel and (childNode.step, childNode.filename) not in submodelIndex:
+                submodelIndex[(childNode.step, childNode.filename)] = sum(1 for step, filename in submodelIndex if step == childNode.step)
+
     # Create children and parent them
     for childNode in node.file.childNodes:
         # (a part's subparts and primitives are already in its mesh: nothing in them becomes an object)
@@ -6514,34 +6532,76 @@ def createBlenderObjectsFromNode(node,
         else:
             childStep, childStepHide = buildStep, stepHide
 
+        # (with submodels built step by step: the steps of each model and submodel)
+        if expanding:
+            prefix = buildKey or ()
+            if childNode.file.isModel:
+                childKey = prefix + (childNode.step, 0, submodelIndex[(childNode.step, childNode.filename)])
+                globalStepNames[childKey] = childNode.filename
+            else:
+                childKey = prefix + (childNode.step, 1)
+            childHideKey = hideKey
+            if childNode.stepHide is not None:
+                ownHideKey = prefix + (childNode.stepHide,)
+                childHideKey = ownHideKey if hideKey is None else min(hideKey, ownHideKey)
+        else:
+            childKey, childHideKey = buildKey, hideKey
+
         yield from createBlenderObjectsFromNode(childNode, childNode.matrix, childNode.filename, childColourName, blenderParentTransform, localToWorldSpaceMatrix @ localMatrix, blenderNodeParent, childTexmap, hidden,
-                                                LDrawNode.childColourMap(colourMap, childNode), childStep, childStepHide)
+                                                LDrawNode.childColourMap(colourMap, childNode), childStep, childStepHide, childKey, childHideKey)
 
     globalCurrentCollection = previousCollection
     return ob
 
 # **************************************************************************************
+def objectStepKeys(node, buildStep, stepHide, buildKey, hideKey):
+    """The step keys (see animateBuildSteps) for when the node's object appears, and when it is hidden (or None)"""
+    if not (Options.animateSteps and Options.expandSubmodels):
+        return (buildStep or 1,), (None if stepHide is None else (stepHide,))
+    if node.file.isModel:
+        # (a model's own mesh, from subparts or primitives it uses directly, appears as the model starts)
+        buildKey = (buildKey or ()) + (1, 1)
+    return buildKey or (1, 1), hideKey
+
+def stepName(key):
+    """The name of a step (see animateBuildSteps) for its timeline marker, e.g. 'Step 3', or 'Step 3 · wheel 2'
+    (or just 'wheel 2' when the model itself has only one step)"""
+    if len(key) <= 2:
+        return "Step {0}".format(key[0])
+    submodel = os.path.splitext(os.path.basename(globalStepNames.get(key[:-2], "")))[0]
+    if len(globalModelSteps) <= 1:
+        return "{0} {1}".format(submodel, key[-2])      # (the model itself has just the one step)
+    return "Step {0} · {1} {2}".format(key[0], submodel, key[-2])
+
 def animateBuildSteps(scene):
     """
     Animates building the model step by step (Options.animateSteps): each step takes Options.framesPerStep frames, and
-    the parts of each step appear (in the viewport and in renders) at its first frame. A pause (yield) every so often.
+    the parts of each step appear (in the viewport and in renders) at its first frame. It starts with nothing showing
+    (for as long as a step), and builds from there. A pause (yield) every so often.
+
+    The steps are ordered by key, a tuple:
+      - (step,) for a step of the model, where a submodel appears all at once in the step that uses it; or
+      - with Options.expandSubmodels, (step, 1) for a step of the model, and (step, 0, n, substep, 1) for a step of the
+        n-th submodel used in that step, which is built (at its place in the model) before the step that uses it.
+        And so on for submodels in submodels.
     """
-    if len(globalModelSteps) < 2:
+    hidden = {ob.as_pointer() for ob in globalHiddenObjects}
+    objects = [entry for entry in globalObjectSteps if entry[0].type in ('MESH', 'LIGHT') and entry[0].as_pointer() not in hidden]
+    steps = sorted({key for ob, key, hideKey in objects})
+    if len(steps) < 2:
         return
 
     framesPerStep = max(1, Options.framesPerStep)
     firstFrame = scene.frame_start
-    stepFrame = {step: firstFrame + index * framesPerStep for index, step in enumerate(globalModelSteps)}
+    # (the first step's time has nothing showing, so the steps start one step later)
+    stepFrame = {key: firstFrame + (index + 1) * framesPerStep for index, key in enumerate(steps)}
 
-    def frameOf(step):
+    def frameOf(key):
         """The frame where the given step starts (or the next step that has pieces in it), or None"""
-        later = [s for s in globalModelSteps if s >= step]
-        return stepFrame[later[0]] if later else None
+        index = bisect.bisect_left(steps, key)
+        return stepFrame[steps[index]] if index < len(steps) else None
 
-    hidden = {ob.as_pointer() for ob in globalHiddenObjects}
-    for count, (ob, step, stepHide) in enumerate(globalObjectSteps):
-        if ob.type not in ('MESH', 'LIGHT') or ob.as_pointer() in hidden:
-            continue
+    for count, (ob, step, stepHide) in enumerate(objects):
         keys = []
         showFrame = frameOf(step)
         if showFrame is not None and showFrame > firstFrame:
@@ -6561,11 +6621,12 @@ def animateBuildSteps(scene):
             yield
 
     # A marker for each step, the frame range, and the finished model showing
-    for step in globalModelSteps:
-        name = "Step {0}".format(step)
-        if not any(marker.name == name and marker.frame == stepFrame[step] for marker in scene.timeline_markers):
+    existing = {(marker.name, marker.frame) for marker in scene.timeline_markers}
+    for step in steps:
+        name = stepName(step)
+        if (name, stepFrame[step]) not in existing:
             scene.timeline_markers.new(name, frame=stepFrame[step])
-    scene.frame_end = firstFrame + len(globalModelSteps) * framesPerStep - 1
+    scene.frame_end = firstFrame + (len(steps) + 1) * framesPerStep - 1
     scene.frame_set(scene.frame_end)
 
 # **************************************************************************************
@@ -7471,6 +7532,8 @@ def importSteps(context, filename, isFullFilepath=True):
     global globalObjectSteps
     globalModelSteps = sorted({child.step for child in node.file.childNodes}) if node.file.isModel else []
     globalObjectSteps = []
+    global globalStepNames
+    globalStepNames = {}
 
     Progress.setWork(node, name)
 
