@@ -335,6 +335,12 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         default=prefs.get("addEnvironment", True)
     )
 
+    transparentBackground: BoolProperty(
+        name="Transparent background",
+        description="Renders the Realistic Look with a transparent background, e.g. to put the picture on a web page or over another picture. The environment still lights the model, and the ground plane only catches the model's shadows. (The Instructions Look always has a transparent background)",
+        default=prefs.get("transparentBackground", False)
+    )
+
     positionCamera: BoolProperty(
         name="Position the camera",
         description="Position the camera to show the whole model",
@@ -381,6 +387,9 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         row.label(text="Default colour")
         row.prop(self, "defaultColour", text="")
         box.prop(self, "addEnvironment")
+        row = box.row()
+        row.enabled = self.look != "instructions"
+        row.prop(self, "transparentBackground")
         box.prop(self, "positionCamera")
         indentedRow(box, self.positionCamera).prop(self, "cameraBorderPercentage", text="Camera border %")
 
@@ -456,6 +465,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("resolveNormals",        self.resolveNormals)
         ImportLDrawOps.prefs.set("addEnvironment",        self.addEnvironment)
         ImportLDrawOps.prefs.set("positionCamera",        self.positionCamera)
+        ImportLDrawOps.prefs.set("transparentBackground", self.transparentBackground)
         ImportLDrawOps.prefs.set("cameraBorderPercentage",self.cameraBorderPercentage)
         ImportLDrawOps.prefs.save()
 
@@ -499,6 +509,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.Options.bakeBevels                 = self.bakeBevels
         loadldraw.Options.addWorldEnvironmentTexture = self.addEnvironment
         loadldraw.Options.addGroundPlane             = self.addEnvironment
+        loadldraw.Options.transparentBackground      = self.transparentBackground
         loadldraw.Options.positionCamera             = self.positionCamera
         loadldraw.Options.cameraBorderPercent        = self.cameraBorderPercentage / 100.0
 

@@ -237,6 +237,7 @@ class Options:
 
     addWorldEnvironmentTexture = True   # Add an environment texture
     addGroundPlane = True               # Add a ground plane
+    transparentBackground = False       # Realistic look: render with a transparent background (the ground plane only catches shadows)
     setRenderSettings = True            # Set render percentage, denoising
     removeDefaultObjects = True         # Remove cube and lamp
     positionCamera = True               # Position the camera where so we get the whole object in shot
@@ -6888,6 +6889,26 @@ def setupRealisticLook():
     removeCollection('White Edged Bricks Collection')
     removeCollection('Solid Bricks Collection')
     removeCollection('Transparent Bricks Collection')
+
+    # A transparent background (Options.transparentBackground). The environment still lights the model, and the
+    # ground plane becomes a shadow catcher: only the model's shadows on it are rendered
+    groundPlane = scene.objects.get("LegoGroundPlane")
+    if Options.transparentBackground:
+        render.film_transparent = True
+        if groundPlane is not None:
+            groundPlane.is_shadow_catcher = True
+        if Options.setRenderSettings and render.image_settings.file_format in ('PNG', 'OPEN_EXR', 'OPEN_EXR_MULTILAYER', 'TIFF', 'TARGA', 'WEBP'):
+            try:
+                render.image_settings.color_mode = 'RGBA'
+            except TypeError:
+                pass
+        scene["LDraw transparent background"] = True
+    elif scene.get("LDraw transparent background"):
+        # (an earlier import made the background transparent: back to normal)
+        render.film_transparent = False
+        if groundPlane is not None:
+            groundPlane.is_shadow_catcher = False
+        del scene["LDraw transparent background"]
 
 # **************************************************************************************
 def removeCollection(name, remove_collection_objects=False):
