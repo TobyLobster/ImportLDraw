@@ -2562,6 +2562,14 @@ class LDrawFile:
             self.__usedColourCodes = codes
         return self.__usedColourCodes
 
+    def hasObjectNodes(self):
+        """Whether anything in the file (or the files it uses) becomes a Blender object"""
+        if self.__hasObjectNodes is None:
+            self.__hasObjectNodes = False      # (in case a file uses itself)
+            self.__hasObjectNodes = any(child.file is not None and (child.isBlenderObjectNode() or child.file.hasObjectNodes())
+                                        for child in self.childNodes)
+        return self.__hasObjectNodes
+
     def studCount(self):
         """How many studs the file adds to its mesh (including those in its subparts and primitives)"""
         if self.__studCount is None:
@@ -2606,6 +2614,7 @@ class LDrawFile:
         self.category         = None        # From '0 !CATEGORY <category>' (e.g. 'Minifig Headwear')
         self.__usedColourCodes = None
         self.__studCount      = None
+        self.__hasObjectNodes = None
 
         isGrainySlopeAllowed = not self.isStud
 
@@ -6296,15 +6305,15 @@ def createBlenderObjectsFromNode(node,
         ob.empty_display_size = 250.0 * globalScaleFactor
 
         # Mark object as transparent if any polygon is transparent
-        ob["Lego.isTransparent"] = False
-        if mesh is not None:
+        # (worked out once for each part's geometry, which all its objects share)
+        if not hasattr(geometry, "isTransparent"):
+            geometry.isTransparent = False
             for faceInfo in geometry.allFaceInfo():
                 material = BlenderMaterials.getMaterial(faceInfo.faceColour, False)
-                if material is not None:
-                    if "Lego.isTransparent" in material:
-                        if material["Lego.isTransparent"]:
-                            ob["Lego.isTransparent"] = True
-                            break
+                if material is not None and material.get("Lego.isTransparent"):
+                    geometry.isTransparent = True
+                    break
+        ob["Lego.isTransparent"] = mesh is not None and geometry.isTransparent
 
         # Add any (LeoCAD) group nodes as parents of 'ob' (the new node), and as children of 'blenderNodeParent'.
         # Also add all objects to 'globalObjectsToAdd'.
@@ -6456,6 +6465,10 @@ def createBlenderObjectsFromNode(node,
 
     # Create children and parent them
     for childNode in node.file.childNodes:
+        # (a part's subparts and primitives are already in its mesh: nothing in them becomes an object)
+        if not (childNode.isBlenderObjectNode() or childNode.file.hasObjectNodes()):
+            continue
+
         # Create sub-objects recursively
         childColourName = LDrawNode.resolveColour(LegoColours.mapColour(childNode.colourName, colourMap), realColourName)
 
@@ -7537,13 +7550,20 @@ def importSteps(context, filename, isFullFilepath=True):
                 space.overlay.show_edge_sharp = True
 
     # Finally add each object to the scene
+    # (the objects are new, so not in a collection yet. Looking each one up in the collection first took time in
+    # proportion to the number of objects already in it: minutes for a model with tens of thousands of bricks)
     debugPrint("Adding {0} objects to scene".format(len(globalObjectsToAdd)))
+    importCollection = getImportCollection()
+    linked = set()
     for ob in globalObjectsToAdd:
-        collection = globalObjectCollections.get(ob.as_pointer())
-        if collection is None:
-            linkToScene(ob)
-        elif collection.objects.find(ob.name) < 0:
+        if ob.as_pointer() in linked:
+            continue
+        linked.add(ob.as_pointer())
+        collection = globalObjectCollections.get(ob.as_pointer(), importCollection)
+        try:
             collection.objects.link(ob)
+        except RuntimeError:
+            pass        # (already in it)
 
     # Pieces hidden in LeoCAD: hidden in the viewport (the eye in the Outliner) and in renders
     for ob in globalHiddenObjects:
