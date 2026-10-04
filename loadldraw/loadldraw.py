@@ -200,6 +200,8 @@ class Options:
     flattenHierarchy   = False          # All parts are under the root object - no sub-models
     submodelCollections = False         # Each submodel (and the model itself) also gets its own collection, nested like the submodels
     minifigHierarchy   = True           # Parts of minifigs are automatically parented to each other in a hierarchy
+    animateSteps       = False          # Animate building the model step by step (from '0 STEP' lines): each step's parts appear in turn
+    framesPerStep      = 12             # With animateSteps: the frames each step takes in the animation
     flattenGroups      = False          # All LEOCad groups are ignored - no groups
     usePrincipledShaderWhenAvailable = True  # Use the new principled shader
     scriptDirectory    = os.path.dirname( os.path.realpath(__file__) )
@@ -285,6 +287,8 @@ globalCamerasToAdd = []         # Camera data to add to the scene
 globalGroupObjects = {}         # LeoCAD group empties created this import, keyed by (parent object, group name)
 globalCurrentCollection = None  # With Options.submodelCollections: the collection for objects being created now
 globalHiddenObjects = []        # Objects of pieces LeoCAD marked as hidden (hidden once they are in the scene)
+globalModelSteps = []           # The building steps of the model imported (its step numbers that have pieces in them)
+globalObjectSteps = []          # (object, step, step it is hidden from or None) for the objects made this import
 globalObjectParts = {}          # Object pointer -> (bare part number, category) of the objects created this import (for minifig rigging)
 globalObjectCollections = {}    # With Options.submodelCollections: object pointer -> the collection it belongs in
 globalImportFilepath = ""       # The file being imported (embedded images may be written next to it)
@@ -2088,6 +2092,8 @@ class LDrawNode:
         self.texmap         = None      # Texture active on the type 1 line that references this node
         self.hidden         = False     # LeoCAD marked this piece as hidden ('0 !LEOCAD PIECE HIDDEN')
         self.colourScope    = None      # The colours defined ('0 !COLOUR') before the line that references this node
+        self.step           = 1         # The building step (counting '0 STEP' lines) of the line that references this node
+        self.stepHide       = None      # The step LeoCAD hides this piece from ('0 !LEOCAD PIECE STEP_HIDE n')
 
     def look_at(obj_camera, target, up_vector):
         bpy.context.view_layer.update()
@@ -2642,6 +2648,8 @@ class LDrawFile:
 
         currentGroupNames = []
         leocadPieceHidden = False
+        leocadStepHide = None
+        currentStep = 1     # Building steps: each '0 STEP' or '0 ROTSTEP' line ends a step
 
         # Texture mapping state (!TEXMAP). Each stack entry is [TexMap, inFallback].
         textureStack = []
@@ -2760,12 +2768,20 @@ class LDrawFile:
                         localColours = dict(localColours)
                         localColours[str(code)] = LegoColours.addLocalColour(colour, line_split)
 
+                if parameters[1] in ("STEP", "ROTSTEP"):
+                    currentStep += 1
+
                 if parameters[1] == "!CATEGORY" and self.category is None:
                     self.category = " ".join(word for word in parameters[2:] if word) or None
 
                 if parameters[1] == "!LEOCAD":
                     if parameters[2] == "PIECE" and "HIDDEN" in parameters[3:]:
                         leocadPieceHidden = True
+                    if parameters[2] == "PIECE" and "STEP_HIDE" in parameters[3:]:
+                        try:
+                            leocadStepHide = int(parameters[parameters.index("STEP_HIDE") + 1])
+                        except (ValueError, IndexError):
+                            pass
                     if parameters[2] == "GROUP":
                         if parameters[3] == "BEGIN":
                             currentGroupNames.append(" ".join(parameters[4:]).strip())
@@ -2829,6 +2845,11 @@ class LDrawFile:
                     # The colours defined so far are passed down to the subfile
                     if localColours and len(self.childNodes) > childCount:
                         self.childNodes[-1].colourScope = localColours
+                    if len(self.childNodes) > childCount:
+                        self.childNodes[-1].step = currentStep
+                        self.childNodes[-1].stepHide = leocadStepHide
+                    if parameters[0] == "1":
+                        leocadStepHide = None
                 except (ValueError, IndexError):
                     printWarningOnce("In file '{0}', the line '{1}' is not formatted correctly (ignoring).".format(self.fullFilepath, line.strip()))
                     bfcInvertNext = False
@@ -6253,10 +6274,14 @@ def createBlenderObjectsFromNode(node,
                                  blenderNodeParent=None,
                                  texmap=None,
                                  hidden=False,
-                                 colourMap=None):
+                                 colourMap=None,
+                                 buildStep=None,
+                                 stepHide=None):
     """
     Creates a Blender Object for the node given and (recursively) for all it's children as required.
     'hidden' is True inside a piece (e.g. a submodel) that LeoCAD marked as hidden.
+    'buildStep' is the building step of the piece of the model that this node is in (a submodel appears all at once,
+    in the step that uses it), and 'stepHide' the step it is hidden from (or None).
     'colourMap' has the colours defined further up ('0 !COLOUR') that apply inside the node: code -> colour name.
     Creates and optimises the mesh for each object too.
     'texmap' is a texture from further up the hierarchy that applies to this node, in the node's coordinates.
@@ -6319,6 +6344,11 @@ def createBlenderObjectsFromNode(node,
         # Also add all objects to 'globalObjectsToAdd'.
         addNodeToParentWithGroups(blenderNodeParent, node.groupNames, ob)
 
+        # The building step it appears in (see animateBuildSteps)
+        if len(globalModelSteps) > 1:
+            ob["LDraw step"] = buildStep or 1
+        globalObjectSteps.append((ob, buildStep or 1, stepHide))
+
         # Remember which part this is, for rigging minifigs (see setupImplicitParents)
         if Options.minifigHierarchy and not node.file.isModel:
             globalObjectParts[ob.as_pointer()] = (barePartNumber(name), node.file.category)
@@ -6353,6 +6383,7 @@ def createBlenderObjectsFromNode(node,
             lamp_object.location = (-27.0 * globalScaleFactor, 0.0, -18.0 * globalScaleFactor)
 
             addNodeToParentWithGroups(blenderNodeParent, [], lamp_object)
+            globalObjectSteps.append((lamp_object, buildStep or 1, stepHide))
 
         if newMeshCreated:
             bm = bmesh.new()
@@ -6477,11 +6508,65 @@ def createBlenderObjectsFromNode(node,
         if childTexmap is not None:
             childTexmap = childTexmap.transformed(childNode.matrix)
 
+        # (the steps of the model itself: everything in a piece of it appears in that piece's step)
+        if node.isRootNode:
+            childStep, childStepHide = childNode.step, childNode.stepHide
+        else:
+            childStep, childStepHide = buildStep, stepHide
+
         yield from createBlenderObjectsFromNode(childNode, childNode.matrix, childNode.filename, childColourName, blenderParentTransform, localToWorldSpaceMatrix @ localMatrix, blenderNodeParent, childTexmap, hidden,
-                                                LDrawNode.childColourMap(colourMap, childNode))
+                                                LDrawNode.childColourMap(colourMap, childNode), childStep, childStepHide)
 
     globalCurrentCollection = previousCollection
     return ob
+
+# **************************************************************************************
+def animateBuildSteps(scene):
+    """
+    Animates building the model step by step (Options.animateSteps): each step takes Options.framesPerStep frames, and
+    the parts of each step appear (in the viewport and in renders) at its first frame. A pause (yield) every so often.
+    """
+    if len(globalModelSteps) < 2:
+        return
+
+    framesPerStep = max(1, Options.framesPerStep)
+    firstFrame = scene.frame_start
+    stepFrame = {step: firstFrame + index * framesPerStep for index, step in enumerate(globalModelSteps)}
+
+    def frameOf(step):
+        """The frame where the given step starts (or the next step that has pieces in it), or None"""
+        later = [s for s in globalModelSteps if s >= step]
+        return stepFrame[later[0]] if later else None
+
+    hidden = {ob.as_pointer() for ob in globalHiddenObjects}
+    for count, (ob, step, stepHide) in enumerate(globalObjectSteps):
+        if ob.type not in ('MESH', 'LIGHT') or ob.as_pointer() in hidden:
+            continue
+        keys = []
+        showFrame = frameOf(step)
+        if showFrame is not None and showFrame > firstFrame:
+            keys += [(firstFrame, True), (showFrame, False)]
+        if stepHide is not None:
+            hideFrame = frameOf(stepHide)
+            if hideFrame is not None and (showFrame is None or hideFrame > showFrame):
+                if not keys:
+                    keys.append((firstFrame, False))
+                keys.append((hideFrame, True))
+        for frame, value in keys:
+            ob.hide_viewport = value
+            ob.hide_render = value
+            ob.keyframe_insert(data_path="hide_viewport", frame=frame)
+            ob.keyframe_insert(data_path="hide_render", frame=frame)
+        if count % 200 == 199:
+            yield
+
+    # A marker for each step, the frame range, and the finished model showing
+    for step in globalModelSteps:
+        name = "Step {0}".format(step)
+        if not any(marker.name == name and marker.frame == stepFrame[step] for marker in scene.timeline_markers):
+            scene.timeline_markers.new(name, frame=stepFrame[step])
+    scene.frame_end = firstFrame + len(globalModelSteps) * framesPerStep - 1
+    scene.frame_set(scene.frame_end)
 
 # **************************************************************************************
 def addFileToCache(relativePath, name):
@@ -7381,6 +7466,12 @@ def importSteps(context, filename, isFullFilepath=True):
     globalObjectParts = {}
     globalPoints = []
 
+    # The building steps of the model (the steps that have pieces in them)
+    global globalModelSteps
+    global globalObjectSteps
+    globalModelSteps = sorted({child.step for child in node.file.childNodes}) if node.file.isModel else []
+    globalObjectSteps = []
+
     Progress.setWork(node, name)
 
     debugPrint("Creating NodeGroups")
@@ -7572,6 +7663,10 @@ def importSteps(context, filename, isFullFilepath=True):
             ob.hide_set(True)
         except RuntimeError:
             ob.hide_viewport = True
+
+    # The building steps as an animation
+    if Options.animateSteps:
+        yield from animateBuildSteps(scene)
 
     # Parent only once everything has been added to the scene, otherwise the matrix_world's are
     # sometimes not updated properly - some are erroneously still the identity matrix.

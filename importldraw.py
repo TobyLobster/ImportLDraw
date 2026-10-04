@@ -32,6 +32,7 @@ import traceback
 import bpy
 from bpy.props import (StringProperty,
                        FloatProperty,
+                       IntProperty,
                        EnumProperty,
                        BoolProperty
                        )
@@ -244,6 +245,20 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         default=prefs.get("submodelCollections", False)
     )
 
+    animateSteps: BoolProperty(
+        name="Animate building steps",
+        description="Animate building the model step by step, from its building steps ('0 STEP' lines). Each step's parts appear in turn (a submodel appears all at once). The timeline has a marker for each step",
+        default=prefs.get("animateSteps", False)
+    )
+
+    framesPerStep: IntProperty(
+        name="Frames per step",
+        description="How many frames each building step takes in the animation",
+        default=prefs.get("framesPerStep", 12),
+        min=1,
+        max=10000
+    )
+
     minifigHierarchy: BoolProperty(
         name="Parent Minifigs",
         description="Add a parent/child hierarchy (tree) for Minifigs",
@@ -391,6 +406,11 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         box.prop(self, "importCameras")
 
         box = layout.box()
+        box.label(text="Building steps", icon='TIME')
+        box.prop(self, "animateSteps")
+        indentedRow(box, self.animateSteps).prop(self, "framesPerStep")
+
+        box = layout.box()
         box.label(text="Ambiguous normals", icon='ORIENTATION_NORMAL')
         box.column(align=True).prop(self, "resolveNormals", expand=True)
 
@@ -418,6 +438,8 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("flattenHierarchy",      self.flatten)
         ImportLDrawOps.prefs.set("submodelCollections",   self.submodelCollections)
         ImportLDrawOps.prefs.set("minifigHierarchy",      self.minifigHierarchy)
+        ImportLDrawOps.prefs.set("animateSteps",          self.animateSteps)
+        ImportLDrawOps.prefs.set("framesPerStep",         self.framesPerStep)
         ImportLDrawOps.prefs.set("useUnofficialParts",    self.useUnofficialParts)
         ImportLDrawOps.prefs.set("useTextures",           self.useTextures)
         ImportLDrawOps.prefs.set("packEmbeddedImages",    self.packEmbeddedImages)
@@ -450,6 +472,8 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.Options.flattenHierarchy           = self.flatten
         loadldraw.Options.submodelCollections        = self.submodelCollections
         loadldraw.Options.minifigHierarchy           = self.minifigHierarchy
+        loadldraw.Options.animateSteps               = self.animateSteps
+        loadldraw.Options.framesPerStep              = self.framesPerStep
         loadldraw.Options.useTextures                = self.useTextures
         loadldraw.Options.packEmbeddedImages         = self.packEmbeddedImages
         loadldraw.Options.useLogoStuds               = self.useLogoStuds
