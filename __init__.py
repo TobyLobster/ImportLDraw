@@ -17,9 +17,17 @@ Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 """
 
+import importlib
 import bpy
 
-from . import importldraw
+if "importldraw" in locals():
+    # Blender is reloading the add-on, e.g. because a new version was installed while Blender was running.
+    # Blender only reloads this file, so reload the modules it uses as well, or the old code would keep
+    # running until Blender is restarted.
+    importlib.reload(importldraw.loadldraw)
+    importlib.reload(importldraw)
+else:
+    from . import importldraw
 
 bl_info = {
     "name": "Import LDraw",

@@ -48,6 +48,7 @@ import operator
 import zipfile
 import tempfile
 import textwrap
+import time
 import base64
 import binascii
 import hashlib
@@ -415,6 +416,123 @@ def internalPrint(message):
     global globalContext
     if globalContext is not None:
         globalContext.report({'INFO'}, message)
+
+# **************************************************************************************
+class Progress:
+    """
+    Shows how far an import has got, while it runs: Blender's progress indicator (a percentage shown in place of
+    the mouse cursor while Blender is busy), and a line in the console every few seconds for long imports.
+
+    Almost all the time goes on building the mesh of each different part (in each colour), so progress is
+    measured in those, plus a little for each object (an object that reuses a mesh is quick).
+    """
+    perObject     = 0.02    # The work for an object, compared to building a new part's mesh
+    building      = 0.95    # How much of the indicator the building takes (the rest is setting up the scene)
+    printInterval = 5.0     # Seconds between lines in the console
+
+    windowManager = None
+    total         = 1.0
+    done          = 0.0
+    parts         = 0
+    partsDone     = 0
+    seen          = set()
+    started       = 0.0
+    lastPrint     = 0.0
+    lastShown     = -1
+
+    def start():
+        """At the start of an import: shows the indicator (at 0) while the files are read"""
+        Progress.total     = 1.0
+        Progress.done      = 0.0
+        Progress.parts     = 0
+        Progress.partsDone = 0
+        Progress.seen      = set()
+        Progress.started   = Progress.lastPrint = time.time()
+        Progress.lastShown = -1
+
+        # (there is no indicator without a window, e.g. when Blender runs in the background)
+        Progress.windowManager = None
+        windowManager = getattr(bpy.context, "window_manager", None)
+        if windowManager is not None and windowManager.windows:
+            Progress.windowManager = windowManager
+            windowManager.progress_begin(0, 100)
+            windowManager.progress_update(0)
+
+    def __partKey(name, colourName):
+        return (name.lower(), colourName)
+
+    def __countPartsAndObjects(node, name, colourName, colourMap, objects, hasObjectsCache):
+        """
+        Goes through the tree as createBlenderObjectsFromNode will, counting the objects it will make and
+        the different parts (in each colour) among them. Returns the number of objects.
+        """
+        if node.isBlenderObjectNode():
+            objects += 1
+            Progress.seen.add(Progress.__partKey(name, colourName))
+
+        for child in node.file.childNodes:
+            # (skip what can't have objects in it, e.g. a part's subparts and primitives)
+            if not (child.isBlenderObjectNode() or Progress.__hasObjects(child.file, hasObjectsCache)):
+                continue
+            childColourName = LDrawNode.resolveColour(LegoColours.mapColour(child.colourName, colourMap), colourName)
+            objects = Progress.__countPartsAndObjects(child, child.filename, childColourName,
+                                                      LDrawNode.childColourMap(colourMap, child), objects, hasObjectsCache)
+        return objects
+
+    def __hasObjects(file, hasObjectsCache):
+        """Whether anything inside the file becomes an object"""
+        key = id(file)
+        if key not in hasObjectsCache:
+            hasObjectsCache[key] = False    # (in case a file uses itself)
+            hasObjectsCache[key] = any(child.isBlenderObjectNode() or Progress.__hasObjects(child.file, hasObjectsCache)
+                                       for child in file.childNodes)
+        return hasObjectsCache[key]
+
+    def setWork(rootNode, name):
+        """Once the files are read: works out how much there is to do"""
+        Progress.seen = set()
+        objects = Progress.__countPartsAndObjects(rootNode, name, Options.defaultColour, None, 0, {})
+        Progress.parts = len(Progress.seen)
+        Progress.seen = set()
+        Progress.total = max(Progress.parts + Progress.perObject * objects, 1.0)
+
+    def objectMade(name, colourName):
+        """After making an object (and the part's mesh, the first time the part is used)"""
+        amount = Progress.perObject
+        key = Progress.__partKey(name, colourName)
+        if key not in Progress.seen:
+            Progress.seen.add(key)
+            Progress.partsDone += 1
+            amount += 1.0
+        Progress.done += amount
+        Progress.__show(Progress.building * min(Progress.done / Progress.total, 1.0))
+
+    def __show(fraction):
+        percent = int(100 * fraction)
+        if Progress.windowManager is not None and percent != Progress.lastShown:
+            Progress.lastShown = percent
+            Progress.windowManager.progress_update(percent)
+
+        now = time.time()
+        if now - Progress.lastPrint >= Progress.printInterval:
+            Progress.lastPrint = now
+            progressPrint("{0}% ({1} of {2} different parts made)".format(percent, Progress.partsDone, Progress.parts))
+
+    def end():
+        """At the end of an import (also when it fails)"""
+        if Progress.windowManager is not None:
+            Progress.windowManager.progress_end()
+            Progress.windowManager = None
+        seconds = time.time() - Progress.started
+        if Progress.started and seconds >= Progress.printInterval:
+            progressPrint("Finished in {0:.1f} seconds".format(seconds))
+        Progress.started = 0.0
+
+# **************************************************************************************
+def progressPrint(message):
+    """Prints how an import is getting on, to the console (always, unlike debugPrint)"""
+    timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-4]
+    print("{0} [importldraw] {1}".format(timestamp, message))
 
 # **************************************************************************************
 def debugPrint(message):
@@ -5962,6 +6080,8 @@ def createBlenderObjectsFromNode(node,
             elif newMeshCreated:
                 bakeModifiers(mesh)
 
+        Progress.objectMade(name, ourColourName)
+
     else:
         blenderParentTransform = blenderParentTransform @ localMatrix
 
@@ -6673,6 +6793,13 @@ def getConvexHull(minPoints = 3):
 
 # **************************************************************************************
 def loadFromFile(context, filename, isFullFilepath=True):
+    """Imports the file. Shows the progress while it runs (see Progress)."""
+    try:
+        return loadFromFileWithoutProgress(context, filename, isFullFilepath)
+    finally:
+        Progress.end()
+
+def loadFromFileWithoutProgress(context, filename, isFullFilepath=True):
     global globalCamerasToAdd
     global globalContext
     global globalScaleFactor
@@ -6730,6 +6857,8 @@ def loadFromFile(context, filename, isFullFilepath=True):
     if Configure.ldrawInstallDirectory == "":
         printError("Could not find LDraw Part Library")
         return None
+
+    Progress.start()
 
     # Clear caches
     CachedDirectoryFilenames.clearCache()
@@ -6801,6 +6930,8 @@ def loadFromFile(context, filename, isFullFilepath=True):
     global globalObjectParts
     globalObjectParts = {}
     globalPoints = []
+
+    Progress.setWork(node, name)
 
     debugPrint("Creating NodeGroups")
     BlenderMaterials.createBlenderNodeGroups()
