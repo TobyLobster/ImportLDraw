@@ -62,7 +62,7 @@ It reads **.mpd**, **.ldr**, **.l3b**, **.dat** and **.io** files, and it's desi
 + **Submodels as collections:** optionally give each submodel its own collection, nested just like the submodels. That makes it easy to show or hide whole sections, or to use them with geometry nodes.
 + **Progress and cancelling:** Import progress is shown in the status bar, Esc cancels it.
 
-![Ghostbusters](./images/ghostbusters_960.png)
+![Tractor](./images/tractor_960.png)
 
 ## Getting started
 
