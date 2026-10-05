@@ -25,6 +25,8 @@ It reads **.mpd**, **.ldr**, **.l3b**, **.dat** and **.io** files, and it's desi
 + Understands **LeoCAD** groups and cameras (both perspective and orthographic).
 + Imports **LSynth** bendable parts, such as hoses and cables.
 
+![Cables](./images/cables_960.png)
+
 ### Looks great
 
 + **Two styles:** choose a **photorealistic** look rendered with *Cycles*, or a clean **building instructions** look rendered with *EEVEE*.
