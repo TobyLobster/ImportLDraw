@@ -6,7 +6,7 @@
 
 ## What is it?
 
-*Import LDraw* loads LEGO models built in LDraw-compatible tools (such as Bricksmith or LeoCAD) or in BrickLink Studio into Blender, ready for you to light, render and animate.
+*Import LDraw* loads LEGO models built in LDraw-compatible tools (such as Studio, Bricksmith or LeoCAD) or in BrickLink Studio into Blender, ready for you to light, render and animate.
 
 It reads **.mpd**, **.ldr**, **.l3b**, **.dat** and **.io** files, and it's designed to be, in order of priority:
 
@@ -36,6 +36,8 @@ It reads **.mpd**, **.ldr**, **.l3b**, **.dat** and **.io** files, and it's desi
 + **Custom colours:** colours defined inside a model or part file (`!COLOUR`) are respected, following the LDraw rules. A definition applies from where it appears to the end of that file, and to any submodels and parts used after it.
 + **Studio lighting:** the realistic look is lit by an HDR image of a photo studio (*background.exr*). If the image is missing, a similar built-in studio light is used instead.
 + **Light bricks** really do emit light.
+
+![Light Brick](./images/light_brick_960.png)
 
 ### Realistic detail, when you want it
 
