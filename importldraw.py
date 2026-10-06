@@ -34,7 +34,8 @@ from bpy.props import (StringProperty,
                        FloatProperty,
                        IntProperty,
                        EnumProperty,
-                       BoolProperty
+                       BoolProperty,
+                       FloatVectorProperty
                        )
 from bpy_extras.io_utils import ImportHelper
 from .loadldraw import loadldraw
@@ -88,6 +89,13 @@ class Preferences():
             return self.__config.getfloat(Preferences.__sectionName, option, fallback=default)
         elif type(default) is int:
             return self.__config.getint(Preferences.__sectionName, option, fallback=default)
+        elif type(default) is tuple:
+            # (e.g. a colour, saved as '1, 0.5, 0')
+            try:
+                value = tuple(float(v) for v in self.__config.get(Preferences.__sectionName, option, fallback="").split(","))
+            except ValueError:
+                return default
+            return value if len(value) == len(default) else default
         else:
             return self.__config.get(Preferences.__sectionName, option, fallback=default)
 
@@ -335,6 +343,16 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         default=prefs.get("addEnvironment", True)
     )
 
+    groundColour: FloatVectorProperty(
+        name="Ground colour",
+        description="The colour of the ground plane (for realistic look only). The ground reflects a little of its colour onto the model, as in real life",
+        subtype='COLOR',
+        size=3,
+        min=0.0,
+        max=1.0,
+        default=prefs.get("groundColour", (1.0, 1.0, 1.0))
+    )
+
     transparentBackground: BoolProperty(
         name="Transparent background",
         description="Renders the Realistic Look with a transparent background, e.g. to put the picture on a web page or over another picture. The environment still lights the model, and the ground plane only catches the model's shadows. (The Instructions Look always has a transparent background)",
@@ -387,6 +405,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         row.label(text="Default colour")
         row.prop(self, "defaultColour", text="")
         box.prop(self, "addEnvironment")
+        indentedRow(box, self.addEnvironment and self.look != "instructions" and not self.transparentBackground).prop(self, "groundColour")
         row = box.row()
         row.enabled = self.look != "instructions"
         row.prop(self, "transparentBackground")
@@ -466,6 +485,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         ImportLDrawOps.prefs.set("addEnvironment",        self.addEnvironment)
         ImportLDrawOps.prefs.set("positionCamera",        self.positionCamera)
         ImportLDrawOps.prefs.set("transparentBackground", self.transparentBackground)
+        ImportLDrawOps.prefs.set("groundColour",          ", ".join("{0:.6g}".format(c) for c in self.groundColour))
         ImportLDrawOps.prefs.set("cameraBorderPercentage",self.cameraBorderPercentage)
         ImportLDrawOps.prefs.save()
 
@@ -510,6 +530,7 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         loadldraw.Options.addWorldEnvironmentTexture = self.addEnvironment
         loadldraw.Options.addGroundPlane             = self.addEnvironment
         loadldraw.Options.transparentBackground      = self.transparentBackground
+        loadldraw.Options.groundColour               = tuple(self.groundColour)
         loadldraw.Options.positionCamera             = self.positionCamera
         loadldraw.Options.cameraBorderPercent        = self.cameraBorderPercentage / 100.0
 

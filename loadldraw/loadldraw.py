@@ -237,6 +237,7 @@ class Options:
 
     addWorldEnvironmentTexture = True   # Add an environment texture
     addGroundPlane = True               # Add a ground plane
+    groundColour = (1.0, 1.0, 1.0)      # The ground plane's colour (scene linear RGB)
     transparentBackground = False       # Realistic look: render with a transparent background (the ground plane only catches shadows)
     setRenderSettings = True            # Set render percentage, denoising
     removeDefaultObjects = True         # Remove cube and lamp
@@ -6758,6 +6759,31 @@ def removeStudioLight(nodes):
             nodes.remove(nodes[name])
 
 # **************************************************************************************
+def setGroundColour(groundPlane):
+    """
+    Sets the colour of the ground plane (Options.groundColour). A colour chosen in the import options always applies.
+    Left white (the default), it doesn't undo a colour given to the ground plane by hand after an earlier import.
+    """
+    material = groundPlane.active_material if groundPlane is not None else None
+    if material is None or not material.name.startswith("Mat_LegoGroundPlane") or material.node_tree is None:
+        return
+    node = next((node for node in material.node_tree.nodes if node.type == 'BSDF_DIFFUSE'), None)
+    if node is None:
+        return      # (its material has been replaced by hand)
+
+    colour = tuple(Options.groundColour[:3]) + (1.0,)
+    isWhite = all(abs(c - 1.0) < 1e-6 for c in colour)
+    current = tuple(node.inputs['Color'].default_value)
+    last = material.get("LDraw ground colour", (1.0, 1.0, 1.0, 1.0))     # (always white before this option)
+    changedByHand = any(abs(a - b) > 1e-4 for a, b in zip(current, last))
+    if isWhite and changedByHand:
+        return
+
+    node.inputs['Color'].default_value = colour
+    material.diffuse_color = colour         # (for the viewport's Solid mode)
+    material["LDraw ground colour"] = colour
+
+# **************************************************************************************
 def setupRealisticLook():
     scene = bpy.context.scene
     render = scene.render
@@ -7807,6 +7833,9 @@ def importSteps(context, filename, isFullFilepath=True):
             links.new(node.outputs[0], out.inputs[0])
 
             groundPlane.data.materials.append(material)
+
+        # Its colour
+        setGroundColour(scene.objects.get("LegoGroundPlane"))
 
     # Set to render at full resolution
     if Options.setRenderSettings:
