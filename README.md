@@ -1,8 +1,8 @@
 # Import LDraw
 
-> Bring your [LEGO](https://www.lego.com/)® creations into [Blender](https://www.blender.org)&trade;: an add-on for importing [LDraw](http://www.ldraw.org)&trade; models and parts.
+![Logo](./images/importldraw_logo_light.svg)
 
-![Tower Bridge](./images/tower_960.png)
+> Bring your [LEGO](https://www.lego.com/)® creations into [Blender](https://www.blender.org)&trade;: an add-on for importing [LDraw](http://www.ldraw.org)&trade; models and parts.
 
 ## What is it?
 
@@ -13,6 +13,8 @@ It reads **.mpd**, **.ldr**, **.l3b**, **.dat** and **.io** files, and it's desi
 1. **Accurate:** your model should look the way it was built.
 2. **Compatible:** it works with files from all the popular LDraw tools.
 3. **Fast:** even large models import in seconds.
+
+![Tower Bridge](./images/tower_960.png)
 
 ## Features
 
