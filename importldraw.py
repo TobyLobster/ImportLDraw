@@ -161,8 +161,8 @@ class ImportLDrawOps(bpy.types.Operator, ImportHelper):
         default=prefs.get("resolution", "Standard"),
         items=(
             ("Standard", "Standard",                   "Import using standard resolution primitives."),
-            ("High",     "High resolution",            "Import using high resolution primitives."),
-            ("Low",      "Low resolution",             "Import using low resolution primitives.")
+            ("High",     "High resolution",            "Import using high resolution primitives. A part whose primitives the library doesn't all have at high resolution uses standard ones (mixed, they leave cracks)"),
+            ("Low",      "Low resolution",             "Import using low resolution primitives. A part whose primitives the library doesn't all have at low resolution uses standard ones (mixed, they leave cracks)")
         )
     )
 

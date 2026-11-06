@@ -171,9 +171,10 @@ def ShowMessageBox(message = "", title = "Message Box", icon = 'INFO'):
 
 # **************************************************************************************
 # **************************************************************************************
-MESH_FORMAT_VERSION = 3     # 2 = texture coordinates and print normals (version 1.3.0)
+MESH_FORMAT_VERSION = 4     # 2 = texture coordinates and print normals (version 1.3.0)
                             # 3 = sharp edges found along edge lines that span several mesh edges, T-junctions
                             #     joined up, and a bevel weight for each edge so its bevel can't overlap (issue #29)
+                            # 4 = hi/low-res primitives searched for before standard ones (issue #120)
 
 class Options:
     """User Options"""
@@ -288,6 +289,8 @@ class Options:
 globalBrickCount = 0
 globalObjectsToAdd = []         # Blender objects to add to the scene
 globalMissingFiles = []         # Files referenced by the import that could not be found
+globalStandardResolutionParts = {}  # Parts made at standard resolution, since not all their primitives exist at the chosen one
+                                    # (a dict used as an ordered set: file name -> True)
 globalCamerasToAdd = []         # Camera data to add to the scene
 globalGroupObjects = {}         # LeoCAD group empties created this import, keyed by (parent object, group name)
 globalCurrentCollection = None  # With Options.submodelCollections: the collection for objects being created now
@@ -648,6 +651,7 @@ class Configure:
     """
 
     localSearchPaths = []
+    resolutionSearchPaths = []      # The 'p/48' (High) or 'p/8' (Low) primitive folders, unofficial and official
     officialSearchPaths = []
     unofficialSearchPaths = []
     warningSuppression = {}
@@ -669,8 +673,28 @@ class Configure:
         if FileSystem.exists(path):
             Configure.unofficialSearchPaths.append(path)
 
+    def isResolutionPath(filepath):
+        """Is the file in one of the folders of primitives for the chosen resolution ('p/48' or 'p/8')?"""
+        folder = os.path.normcase(os.path.normpath(os.path.dirname(filepath)))
+        return any(folder == os.path.normcase(os.path.normpath(path)) for path in Configure.resolutionSearchPaths)
+
+    def appendResolutionPath(primitivesPath):
+        """
+        Adds the primitives folder for the chosen resolution ('<primitivesPath>/48' or '<primitivesPath>/8'), if any.
+        These are searched before all the other folders (apart from local ones): otherwise an unofficial
+        standard primitive is found before an official hi-res one. (Stud.io's library has standard copies of
+        many official primitives in 'UnOfficial/p', so with High resolution a part got a mixture of 16 and 48
+        segment primitives, which don't meet: black slivers on the top of 24246, issue #120)
+        """
+        folder = {"High": "48", "Low": "8"}.get(Options.resolution)
+        if folder is not None:
+            path = FileSystem.pathInsensitive(os.path.join(primitivesPath, folder))
+            if FileSystem.exists(path):
+                Configure.resolutionSearchPaths.append(path)
+
     def __setSearchPaths():
         Configure.localSearchPaths = []
+        Configure.resolutionSearchPaths = []
         Configure.officialSearchPaths = []
         Configure.unofficialSearchPaths = []
 
@@ -684,25 +708,21 @@ class Configure:
                 Configure.appendLocalPath(os.path.join(Options.studLogoDirectory, "8"))
             Configure.appendLocalPath(Options.studLogoDirectory)
 
+        # The primitives for the chosen resolution (searched before all the standard folders, see appendResolutionPath)
+        if Options.useUnofficialParts:
+            Configure.appendResolutionPath(os.path.join(Configure.unofficialDirectory, "p"))
+        Configure.appendResolutionPath(os.path.join(Configure.ldrawInstallDirectory, "p"))
+        if Options.useUnofficialParts:
+            Configure.appendResolutionPath(os.path.join(Configure.ldrawInstallDirectory, "tente", "p"))
+        debugPrint("{0}-res primitives selected".format(Options.resolution))
+
         # Search official parts
-        if Options.resolution == "High":
-            Configure.appendOfficialPath(os.path.join(Configure.ldrawInstallDirectory, "p", "48"))
-            debugPrint("High-res primitives selected")
-        elif Options.resolution == "Low":
-            Configure.appendOfficialPath(os.path.join(Configure.ldrawInstallDirectory, "p", "8"))
-            debugPrint("Low-res primitives selected")
-        else:
-            debugPrint("Standard-res primitives selected")
 
         Configure.appendOfficialPath(os.path.join(Configure.ldrawInstallDirectory, "p"))
         Configure.appendOfficialPath(os.path.join(Configure.ldrawInstallDirectory, "parts"))
 
         # Search unofficial parts
         if Options.useUnofficialParts:
-            if Options.resolution == "High":
-                Configure.appendUnofficialPath(os.path.join(Configure.unofficialDirectory, "p", "48"))
-            elif Options.resolution == "Low":
-                Configure.appendUnofficialPath(os.path.join(Configure.unofficialDirectory, "p", "8"))
             Configure.appendUnofficialPath(os.path.join(Configure.unofficialDirectory, "p"))
             Configure.appendUnofficialPath(os.path.join(Configure.unofficialDirectory, "parts"))
 
@@ -717,10 +737,6 @@ class Configure:
         # Last resort, try the Tente parts
         if Options.useUnofficialParts:
             # Add 'Tente' parts too
-            if Options.resolution == "High":
-                Configure.appendUnofficialPath(os.path.join(Configure.ldrawInstallDirectory, "tente", "p", "48"))
-            elif Options.resolution == "Low":
-                Configure.appendUnofficialPath(os.path.join(Configure.ldrawInstallDirectory, "tente", "p", "8"))
             Configure.appendUnofficialPath(os.path.join(Configure.ldrawInstallDirectory, "tente", "p"))
             Configure.appendUnofficialPath(os.path.join(Configure.ldrawInstallDirectory, "tente", "parts"))
 
@@ -1539,8 +1555,12 @@ class FileSystem:
 
         return lines
 
-    def locate(filename, rootPath = None):
-        """Given a file name of an ldraw file, find the full path"""
+    def locate(filename, rootPath = None, useResolutionPaths = True):
+        """
+        Given a file name of an ldraw file, find the full path.
+        'useResolutionPaths' False leaves out the hi/low-res primitives folders (for a part made at standard
+        resolution, see LDrawFile.mixesResolutions)
+        """
 
         partName = filename.replace("\\", os.path.sep)
         partName = os.path.expanduser(partName)
@@ -1551,6 +1571,8 @@ class FileSystem:
         # Gather all paths in the order we want to search
         allSearchPaths = []
         allSearchPaths.extend(Configure.localSearchPaths)
+        if useResolutionPaths:
+            allSearchPaths.extend(Configure.resolutionSearchPaths)
         allSearchPaths.extend(Configure.unofficialSearchPaths)
         allSearchPaths.extend(Configure.officialSearchPaths)
         if rootPath not in allSearchPaths:
@@ -2100,6 +2122,8 @@ class LDrawNode:
         self.colourScope    = None      # The colours defined ('0 !COLOUR') before the line that references this node
         self.step           = 1         # The building step (counting '0 STEP' lines) of the line that references this node
         self.stepHide       = None      # The step LeoCAD hides this piece from ('0 !LEOCAD PIECE STEP_HIDE n')
+        self.standardResolution = False     # Use only standard resolution primitives, whatever Options.resolution is
+                                            # (in a part that can't have all of them at the chosen resolution)
 
     def look_at(obj_camera, target, up_vector):
         bpy.context.view_layer.update()
@@ -2181,19 +2205,31 @@ class LDrawNode:
     def loadSteps(self):
         """Reads the file and the files it uses, pausing (yield) after each file read (see ImportTask)"""
         # Is this file in the cache?
-        self.file = CachedFiles.getCached(self.filename)
+        cacheKey = LDrawFile.cacheKey(self.filename, self.standardResolution)
+        self.file = CachedFiles.getCached(cacheKey)
         if self.file is None:
             # Not in cache, so load file
-            self.file = LDrawFile(self.filename, self.isFullFilepath, self.parentFilepath, None, self.isSubPart)
+            self.file = LDrawFile(self.filename, self.isFullFilepath, self.parentFilepath, None, self.isSubPart,
+                                  standardResolution=self.standardResolution)
             assert self.file is not None
 
             # Add the new file to the cache
-            CachedFiles.addToCache(self.filename, self.file)
+            CachedFiles.addToCache(cacheKey, self.file)
             yield
 
         # Load any children
         for child in self.file.childNodes:
             yield from child.loadSteps()
+
+        # With hi or low-res primitives, a part that uses some round primitives (cylinders, discs, rings...) that
+        # aren't available at that resolution is made entirely of standard resolution primitives instead. Mixed
+        # up, the 16 segment primitives don't meet the 48 (or 8) segment ones, leaving cracks (issue #120)
+        # (A part used by a part (e.g. 3819 is a mirrored 3818) is part of the same mesh, so it is made the same way)
+        if (Options.resolution != "Standard" and not self.standardResolution
+                and self.file.isPart and not self.file.isSubPart and self.file.mixesResolutions()):
+            globalStandardResolutionParts[self.filename] = True
+            self.standardResolution = True
+            yield from self.loadSteps()
 
     def resolveColour(colourName, realColourName):
         if colourName == "16":
@@ -2266,8 +2302,10 @@ class LDrawNode:
         ourColourName = realColourName      # (the caller works out our colour, see createBlenderObjectsFromNode)
         code = LDrawNode.getBFCCode(accumCull, accumInvert, self.bfcCull, self.bfcInverted)
         textureCode = "_tx" + texmap.signature() if texmap is not None else ""
-        meshName = "Mesh_{0}_{1}{2}{3}{4}".format(basename, ourColourName, code, textureCode, colourCode)
-        key = (self.filename, ourColourName, accumCull, accumInvert, self.bfcCull, self.bfcInverted, textureCode, colourCode, deferStuds)
+        # (a part made at standard resolution when another resolution was chosen gets its own name, see loadSteps)
+        resolutionCode = "_sr" if self.standardResolution and Options.resolution != "Standard" else ""
+        meshName = "Mesh_{0}_{1}{2}{3}{4}{5}".format(basename, ourColourName, code, textureCode, colourCode, resolutionCode)
+        key = (self.filename, ourColourName, accumCull, accumInvert, self.bfcCull, self.bfcInverted, textureCode, colourCode, deferStuds, self.standardResolution)
         bakedGeometry = CachedGeometry.getCached(key)
         if bakedGeometry is None:
             combinedMatrix = parentMatrix @ self.matrix
@@ -2354,6 +2392,39 @@ class LDrawFile:
     Specifically this represents an IO, LDR, L3B, DAT or one '0 FILE' section of an MPD.
     Splits up an MPD file into '0 FILE' sections and caches them."""
 
+    def cacheKey(filename, standardResolution):
+        """The key for a file in CachedFiles (a file read for a part made at standard resolution is kept separately)"""
+        return "<standard resolution>" + filename if standardResolution else filename
+
+    roundPrimitiveName = re.compile(r"^(\d+-\d+|[rt]m?\d\d[ioqr]\d)", re.IGNORECASE)
+
+    def mixesResolutions(self):
+        """
+        Does this file use round primitives (e.g. '2-4cyli.dat', '4-4ring3.dat', 't04q4000.dat') both from the
+        folder of primitives for the chosen resolution (e.g. 'p/48') and from a standard folder (because the
+        library has no such primitive at that resolution)? (only for files that are already loaded)
+        """
+        if self.__mixesResolutions is None:
+            found = set()
+            self.__findPrimitiveResolutions(found, set())
+            self.__mixesResolutions = len(found) > 1
+        return self.__mixesResolutions
+
+    def __findPrimitiveResolutions(self, found, seen):
+        """Adds to 'found' whether each round primitive used is at the chosen resolution (True) or not (False)"""
+        for child in self.childNodes:
+            file = child.file
+            if file is None or id(file) in seen:
+                continue
+            seen.add(id(file))
+            name = child.filename.replace("\\", "/")
+            # (a primitive named with its folder, e.g. '48\4-4cyli.dat', is the resolution the author chose)
+            if "/" not in name and LDrawFile.roundPrimitiveName.match(name) and getattr(file, "fullFilepath", None):
+                found.add(Configure.isResolutionPath(file.fullFilepath))
+                if len(found) > 1:
+                    return
+            file.__findPrimitiveResolutions(found, seen)
+
     def __loadLegoFile(self, filepath, isFullFilepath, parentFilepath):
         # Resolve full filepath if necessary
         if isFullFilepath is False:
@@ -2361,7 +2432,7 @@ class LDrawFile:
                 parentDir = os.path.dirname(filepath)
             else:
                 parentDir = os.path.dirname(parentFilepath)
-            result = FileSystem.locate(filepath, parentDir)
+            result = FileSystem.locate(filepath, parentDir, not self.standardResolution)
             if result is None:
                 printWarningOnce("Missing file {0}".format(filepath))
                 if filepath not in globalMissingFiles:
@@ -2421,10 +2492,7 @@ class LDrawFile:
                     Configure.appendUnofficialPath(os.path.join(direct, "CustomParts"))
                     Configure.appendUnofficialPath(os.path.join(direct, "CustomParts", "parts"))
 
-                    if Options.resolution == "High":
-                        Configure.appendUnofficialPath(os.path.join(direct, "CustomParts", "p", "48"))
-                    elif Options.resolution == "Low":
-                        Configure.appendUnofficialPath(os.path.join(direct, "CustomParts", "p", "8"))
+                    Configure.appendResolutionPath(os.path.join(direct, "CustomParts", "p"))
                     Configure.appendUnofficialPath(os.path.join(direct, "CustomParts", "p"))
                     Configure.appendUnofficialPath(os.path.join(direct, "CustomParts", "s"))
                     Configure.appendUnofficialPath(os.path.join(direct, "CustomParts", "s", "s"))
@@ -2490,11 +2558,11 @@ class LDrawFile:
         # Remaining sections are loaded into the cached files
         for (sectionFilename, lines) in sections[1:]:
             # Load section
-            file = LDrawFile(sectionFilename, False, filepath, lines, False)
+            file = LDrawFile(sectionFilename, False, filepath, lines, False, standardResolution=self.standardResolution)
             assert file is not None
 
             # Cache section
-            CachedFiles.addToCache(sectionFilename, file)
+            CachedFiles.addToCache(LDrawFile.cacheKey(sectionFilename, self.standardResolution), file)
 
         return True
 
@@ -2603,8 +2671,11 @@ class LDrawFile:
 
         return name in ("logo3.dat", "logo4.dat", "logo5.dat", "logotente.dat")
 
-    def __init__(self, filename, isFullFilepath, parentFilepath, lines = None, isSubPart=False):
-        """Loads an LDraw file (IO, LDR, L3B, DAT or MPD)"""
+    def __init__(self, filename, isFullFilepath, parentFilepath, lines = None, isSubPart=False, standardResolution=False):
+        """
+        Loads an LDraw file (IO, LDR, L3B, DAT or MPD)
+        'standardResolution': the file and the files it uses are found without the hi/low-res primitives folders
+        """
 
         global globalCamerasToAdd
         global globalScaleFactor
@@ -2627,6 +2698,8 @@ class LDrawFile:
         self.__usedColourCodes = None
         self.__studCount      = None
         self.__hasObjectNodes = None
+        self.__mixesResolutions = None
+        self.standardResolution = standardResolution
 
         isGrainySlopeAllowed = not self.isStud
 
@@ -2883,6 +2956,7 @@ class LDrawFile:
                 newNode = LDrawNode(new_filename, False, self.fullFilepath, new_colourName, localMatrix, canCullChildNode, bfcInvertNext, processingLSynthParts, not self.isModel, False, currentGroupNames)
                 newNode.texmap = currentTexture
                 newNode.hidden = leocadPieceHidden
+                newNode.standardResolution = self.standardResolution
                 self.childNodes.append(newNode)
             else:
                 printWarningOnce("In file '{0}', the line '{1}' is not formatted correctly (ignoring).".format(self.fullFilepath, line))
@@ -7482,6 +7556,7 @@ def importSteps(context, filename, isFullFilepath=True):
 
     global globalMissingFiles
     globalMissingFiles = []
+    globalStandardResolutionParts.clear()
 
     # Make sure we have the latest configuration, including the latest ldraw directory
     # and the colours derived from that.
@@ -7596,6 +7671,12 @@ def importSteps(context, filename, isFullFilepath=True):
         raise
     Progress.finishing()
     yield
+
+    if globalStandardResolutionParts:
+        count = len(globalStandardResolutionParts)
+        shown = ", ".join(list(globalStandardResolutionParts)[:5]) + (" and {0} more".format(count - 5) if count > 5 else "")
+        debugPrint("{0} {1} made with standard resolution primitives, because the library doesn't have all {2} primitives at {3} resolution: {4}".format(
+            count, "part is" if count == 1 else "parts are", "its" if count == 1 else "their", Options.resolution, shown))
 
     # Say clearly if files were missing, since the result can be incomplete or even empty
     # (e.g. a part that needs subparts newer than the LDraw library in use)
